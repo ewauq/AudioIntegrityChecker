@@ -1,0 +1,31 @@
+version: '3'
+
+tasks:
+  clean:
+    desc: Remove all build artifacts and temporary files (bin/, obj/, .vs/)
+    cmds:
+      - powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue bin, obj, .vs"
+      - powershell -NoProfile -Command "Get-ChildItem -Filter '*.user' -File | Remove-Item -Force -ErrorAction SilentlyContinue"
+
+  build:
+    desc: Publish Release single-file exe to dist/
+    cmds:
+      - dotnet publish -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -c Release -o dist
+
+  run:
+    desc: Launch the published Release exe from dist/
+    cmds:
+      - dist\\AudioIntegrityChecker.exe
+
+  run-dev:
+    desc: Build Debug and launch (copies libFLAC.dll from dist/ to Debug output)
+    cmds:
+      - dotnet build -c Debug
+      - cmd: powershell -NoProfile -Command "Copy-Item dist\\libFLAC.dll bin\\Debug\\net8.0-windows\\ -ErrorAction SilentlyContinue"
+        ignore_error: true
+      - bin\\Debug\\net8.0-windows\\AudioIntegrityChecker.exe
+
+  format:
+    desc: Format all C# source files with CSharpier
+    cmds:
+      - dotnet csharpier format .
