@@ -595,7 +595,7 @@ public sealed class MainForm : Form
 
         if (_errorCount == 0 && _warningCount == 0)
         {
-            builder.Append("No errors found ✓");
+            builder.Append("No errors found.");
         }
         else
         {
