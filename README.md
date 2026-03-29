@@ -1,6 +1,8 @@
 # Audio Integrity Checker
 
-A Windows utility for verifying the integrity of audio files. Drop a folder, click **Start scan**, and get a clear report of every corrupt or structurally broken file.
+A Windows utility for verifying the integrity of audio files. 
+
+Just drop a folder or files, click **Start scan**, and get a clear report of every corrupt or structurally broken file.
 
 ![Screenshot](https://i.imgur.com/391WrMJ.png)
 
@@ -54,7 +56,7 @@ Worker count is auto-detected at startup: `min(CPU cores, 8)` parallel threads a
 ## Notes
 
 - The app detects which backend to use automatically. If `libFLAC.dll` is not found, it falls back to `flac.exe` if available in PATH or next to the exe.
-- This project was vibecoded with [Claude](https://claude.ai/claude-code) (Anthropic).
+- This project was vibecoded with [Claude](https://claude.ai/) (Anthropic).
 
 ---
 
