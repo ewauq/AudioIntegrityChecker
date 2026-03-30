@@ -10,37 +10,38 @@ Just drop a folder or files, click **Start scan**, and get a clear report of eve
 
 ## How it works
 
-Audio Integrity Checker loads each file entirely into memory and runs it through its format-specific decoder from start to finish. There is no playback — just a full read of every byte. If anything is wrong with the audio data, it gets caught and reported.
+Audio Integrity Checker loads each file entirely into memory and runs it through its format-specific decoder from start to finish. There is no playback — just a full read of every byte. Any anomaly in the audio data is caught and reported.
 
-Files are processed in parallel using multithreading. On an SSD this makes a substantial difference, since the bottleneck shifts to pure decoding speed. On a HDD, random access between files is slow by nature — sequential reads help, but a large collection will still take longer than on flash storage.
+Files are processed in parallel across multiple threads. On an SSD this makes a substantial difference, since the bottleneck shifts to pure decoding speed. On a HDD, the mechanical seek time between files limits throughput — a large collection will still take considerably longer than on flash storage.
 
 ---
 
 ## FLAC
 
-Decoding is done via the official [libFLAC](https://xiph.org/flac/) library — the same library used by the FLAC reference encoder/decoder. Every frame's CRC is verified against the audio data.
+Decoding is done via the official [libFLAC](https://xiph.org/flac/) library. Every frame carries a CRC checksum that covers its audio content; the decoder verifies each one against the actual data.
 
-If `libFLAC.dll` is not found next to the exe, the tool automatically falls back to `flac.exe` (looked up in PATH or next to the exe).
+If `libFLAC.dll` is not found next to the exe, the tool automatically falls back to `flac.exe` (searched in the application folder first, then in PATH).
 
 ---
 
 ## MP3
 
-Analysis runs in two sequential passes on the same in-memory buffer.
+MP3 analysis runs in two sequential passes on the same in-memory buffer.
 
-**Pass 1 — Structural parser (native)**
+**Pass 1 — Structural parser (pure C#, no external library)**
 
-Every frame header is parsed and validated: sync word, MPEG version, Layer III marker, bitrate index, sample rate index. Frame sizes are computed and the parser walks the stream frame by frame, checking that each one starts exactly where expected.
+Every frame header is parsed and validated: sync word, MPEG version, Layer III marker, bitrate, and sample rate. The parser then walks the stream frame by frame, computing each frame's expected size and verifying that the next frame starts exactly where it should.
 
-- CRC-protected frames (protection bit = 0) have their CRC-16 verified against the side information bytes.
-- The Xing header (VBR) or Info header (CBR), if present, is checked: the declared frame count is compared against the actual count found during the scan.
-- If a LAME tag is present, its CRC-16 (covering the first 190 bytes of the first frame) is verified.
+Additional checks:
+- Frames that carry a CRC have their checksum verified against the frame's side information.
+- The Xing header (VBR files) or Info header (CBR files), if present, is validated: the declared frame count is compared against the actual count found during the scan.
+- If a LAME tag is present, its own CRC is verified.
 
-**Pass 2 — Full audio decode ([mpg123](https://www.mpg123.de/))**
+**Pass 2 — Full audio decode via [mpg123](https://www.mpg123.de/)**
 
-The entire buffer is fed to mpg123 and decoded to PCM. This catches bit reservoir errors, Huffman decoding failures, and any corruption that survives the structural scan.
+The entire buffer is fed to mpg123 and fully decoded to PCM. This catches corruption that survives the structural scan — bit reservoir errors, Huffman decoding failures, and similar low-level issues.
 
-If `mpg123.dll` is not found, Pass 2 is disabled and a warning is shown — Pass 1 still runs.
+Pass 2 is skipped if Pass 1 already found an error, since the file is already confirmed corrupt. If `mpg123.dll` is not found next to the exe, Pass 2 is disabled entirely and a warning is shown in the status bar — Pass 1 still runs.
 
 ---
 
@@ -50,8 +51,8 @@ If `mpg123.dll` is not found, Pass 2 is disabled and a warning is shown — Pass
 |---|---|
 | **OK** | File passed all checks without issue |
 | **WARNING** | Structural anomaly detected — audio data is likely intact and playable |
-| **ERROR** | Audio data is corrupt or the stream is undecodable |
-| **SKIPPED** | Format not supported |
+| **ERROR** | Audio data is corrupt or the stream cannot be decoded |
+| **SKIPPED** | File format not supported — the file was ignored during the scan |
 
 ---
 
@@ -59,27 +60,27 @@ If `mpg123.dll` is not found, Pass 2 is disabled and a warning is shown — Pass
 
 ### FLAC
 
-| Diagnostic | Level | Triggered by | Audio data | Possible fix |
-|---|---|---|---|---|
-| `LOST_SYNC` | WARNING | Garbage bytes after the last valid frame — common in slightly mis-encoded or edited files | Likely intact | Re-encode the file with `flac --best` to produce a clean stream |
-| `BAD_HEADER` | WARNING | Frame header that libFLAC could not parse | Likely intact | Re-encode the file; the source audio is likely fine |
-| `FRAME_CRC_MISMATCH` | ERROR | A frame's CRC doesn't match its audio content — the samples stored on disk are wrong | **Corrupt** | Re-download or restore from backup — the affected samples cannot be recovered |
-| `UNPARSEABLE_STREAM` | ERROR | The bitstream structure is so broken the decoder cannot make sense of it | **Undecodable** | Re-download or restore from backup; try `flac --decode` to salvage whatever audio is still readable |
+| Diagnostic | Level | Technical cause | Common cause | Audio data | Possible fix |
+|---|---|---|---|---|---|
+| `LOST_SYNC` | WARNING | Extra bytes found after the last valid frame | File was edited, tagged, or re-saved by a tool that appended data without cleaning up | Likely intact | Re-encode with `flac --best` to produce a clean stream |
+| `BAD_HEADER` | WARNING | Frame header that libFLAC could not parse | File was partially overwritten, or originates from a buggy encoder | Likely intact | Re-encode the file; the source audio is likely fine |
+| `FRAME_CRC_MISMATCH` | ERROR | A frame's CRC does not match its audio content | Bad disk sector, failed transfer, or storage degradation that silently flipped bits | **Corrupt** | Re-download or restore from backup — the damaged samples cannot be recovered |
+| `UNPARSEABLE_STREAM` | ERROR | The bitstream is too broken for the decoder to interpret | Severe corruption, wrong file extension, or an incomplete download | **Undecodable** | Re-download or restore from backup; try `flac --decode` to salvage any audio that is still readable |
 
 ### MP3
 
-| Diagnostic | Level | Pass | Triggered by | Audio data | Possible fix |
-|---|---|---|---|---|---|
-| `BAD_HEADER` | WARNING | 1 | Frame header with an invalid bitrate or sample rate index — parser skipped the frame | Likely intact | Run [mp3val](https://mp3val.sourceforge.net/) to strip or repair the offending frame |
-| `JUNK_DATA` | WARNING | 1 | 1–3 unexpected bytes between two otherwise valid frames (small alignment gap) | Likely intact | Run mp3val to strip the gap; usually left by editors or taggers |
-| `LOST_SYNC` | WARNING | 1 | Sync word missing at the expected position after a frame — larger gap, possibly cut or spliced audio | Likely intact | Run mp3val; if the file was spliced, re-download the original |
-| `XING_FRAME_COUNT_MISMATCH` | WARNING | 1 | The Xing VBR header declares a different frame count than what the parser actually counted — seek table may be off | Likely intact | Rebuild the VBR header: mp3val `-f`, or foobar2000 → right-click → *Fix VBR MP3 header* |
-| `INFO_FRAME_COUNT_MISMATCH` | WARNING | 1 | The Info CBR header declares a different frame count than what the parser actually counted — header was likely written by a buggy encoder or editor | Likely intact | Run mp3val `-f` to rebuild the Info header |
-| `LAME_TAG_CRC_MISMATCH` | WARNING | 1 | The LAME tag embedded in the first frame has an invalid CRC — encoder metadata is unreliable | Likely intact | Rebuild the LAME tag with mp3val; does not affect audio content |
-| `TRUNCATED_STREAM` | ERROR | 1 | End of file reached mid-frame — the file was cut short | **Truncated** | Re-download; the file is incomplete. Partial audio up to the cut is playable |
-| `FRAME_CRC_MISMATCH` | ERROR | 1 | A CRC-protected frame's checksum doesn't match its side information — frame header or side data is wrong | **Corrupt** | Re-download or restore from backup — the affected frame's samples are wrong |
-| `DECODE_ERROR` | ERROR | 2 | mpg123 returned a decode error — covers bit reservoir underruns, Huffman decoding failures, and other low-level issues | **Corrupt** | Re-download or restore from backup; re-encoding from a lossless source is the only way to recover |
-| `INIT_FAILED` | ERROR | 2 | mpg123 handle could not be created or opened — internal library error | — | Verify that `mpg123.dll` is not corrupted; re-download it from [mpg123.de](https://www.mpg123.de/download.shtml) |
+| Diagnostic | Level | Pass | Technical cause | Common cause | Audio data | Possible fix |
+|---|---|---|---|---|---|---|
+| `BAD_HEADER` | WARNING | 1 | Frame header with an invalid bitrate or sample rate index | Produced by a buggy encoder, converter, or editing tool | Likely intact | Run [mp3val](https://mp3val.sourceforge.net/) to strip or repair the offending frame |
+| `JUNK_DATA` | WARNING | 1 | 1–3 unexpected bytes found between two valid frames | Left behind by a tag editor or audio editor that did not align data correctly | Likely intact | Run mp3val to strip the gap |
+| `LOST_SYNC` | WARNING | 1 | Sync word missing at the expected position after a frame | File was cut, spliced, or had data inserted by an editor | Likely intact | Run mp3val; if the file was spliced, re-download the original |
+| `XING_FRAME_COUNT_MISMATCH` | WARNING | 1 | The Xing VBR header declares a frame count that does not match the actual frame count | File was trimmed or extended after encoding without updating the VBR header | Likely intact | Rebuild the VBR header: mp3val `-f`, or foobar2000 → right-click → *Fix VBR MP3 header* |
+| `INFO_FRAME_COUNT_MISMATCH` | WARNING | 1 | The Info CBR header declares a frame count that does not match the actual frame count | Buggy encoder, or an editing tool that modified the file without updating the header | Likely intact | Run mp3val `-f` to rebuild the Info header |
+| `LAME_TAG_CRC_MISMATCH` | WARNING | 1 | The LAME tag CRC does not match the first frame content | A tag editor modified the beginning of the file without recalculating the LAME CRC | Likely intact | Run mp3val to rebuild the tag; audio content is unaffected |
+| `TRUNCATED_STREAM` | ERROR | 1 | End of file reached in the middle of a frame | Incomplete download, interrupted transfer, or a disk write that stopped early | **Truncated** | Re-download the file; audio up to the cut point is still playable |
+| `FRAME_CRC_MISMATCH` | ERROR | 1 | A frame's CRC does not match its side information | Bit-level corruption from a bad disk sector, RAM error, or failed transfer | **Corrupt** | Re-download or restore from backup — the damaged frame's audio samples are wrong |
+| `DECODE_ERROR` | ERROR | 2 | mpg123 reported a decode error (bit reservoir underrun, Huffman decoding failure, etc.) | Corruption that passed the structural scan but breaks actual audio decoding | **Corrupt** | Re-download or restore from backup; re-encoding from a lossless source is the only way to recover clean audio |
+| `INIT_FAILED` | ERROR | 2 | mpg123 could not be initialised | `mpg123.dll` is missing, corrupted, or built for the wrong architecture (32-bit vs 64-bit) | — | Verify that `mpg123.dll` is present next to the exe; re-download the x64 build from [mpg123.de](https://www.mpg123.de/download.shtml) |
 
 ---
 
@@ -88,7 +89,8 @@ If `mpg123.dll` is not found, Pass 2 is disabled and a warning is shown — Pass
 | Format | Status | Backend |
 |---|---|---|
 | FLAC | Supported | `libFLAC.dll` (falls back to `flac.exe`) |
-| MP3 | Supported | Structural parser + `mpg123.dll` |
+| MP3 | Supported since 1.1.0 | Pure C# structural parser + `mpg123.dll` |
+| Ogg Vorbis | Planned | — |
 | AAC / M4A | Planned | — |
 | WAV / AIFF | Planned | — |
 | Opus | Planned | — |
@@ -100,7 +102,7 @@ If `mpg123.dll` is not found, Pass 2 is disabled and a warning is shown — Pass
 - Windows 10 or later (x64)
 - .NET 8 Desktop Runtime
 - `libFLAC.dll` placed next to the exe (or in PATH)
-- `mpg123.dll` placed next to the exe — optional, enables MP3 audio decode (Pass 2)
+- `mpg123.dll` placed next to the exe (optional — enables MP3 audio decode in Pass 2)
 
 ---
 
