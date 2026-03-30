@@ -11,7 +11,7 @@ public sealed class CheckerRegistry
     )
     {
         { "FLAC", ["flac"] },
-        { "MP3",  ["mp3"] },
+        { "MP3", ["mp3"] },
     };
 
     // extension (lower, no dot) → active checker instance

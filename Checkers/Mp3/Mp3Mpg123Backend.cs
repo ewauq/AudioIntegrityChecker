@@ -7,7 +7,7 @@ namespace AudioIntegrityChecker.Checkers.Mp3;
 internal static class Mp3Mpg123Backend
 {
     private static bool? _libraryAvailable;
-    private static bool  _initialized;
+    private static bool _initialized;
     private static readonly object _initLock = new();
 
     internal static bool IsLibraryAvailable()

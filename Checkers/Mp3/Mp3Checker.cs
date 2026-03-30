@@ -9,11 +9,12 @@ internal enum Mp3Diagnostic
     JUNK_DATA,
     BAD_HEADER,
     FRAME_CRC_MISMATCH,
-    XING_FRAME_COUNT_MISMATCH,  // VBR: le header Xing indique un mauvais nombre de frames
-    INFO_FRAME_COUNT_MISMATCH,  // CBR: le header Info indique un mauvais nombre de frames
+    XING_FRAME_COUNT_MISMATCH, // VBR: le header Xing indique un mauvais nombre de frames
+    INFO_FRAME_COUNT_MISMATCH, // CBR: le header Info indique un mauvais nombre de frames
     LAME_TAG_CRC_MISMATCH,
     TRUNCATED_STREAM,
     LOST_SYNC,
+
     // Pass 2 — decode
     DECODE_ERROR,
     INIT_FAILED,
@@ -21,14 +22,15 @@ internal enum Mp3Diagnostic
 
 internal static class Mp3DiagnosticInfo
 {
-    internal static bool IsError(Mp3Diagnostic d) => d switch
-    {
-        Mp3Diagnostic.FRAME_CRC_MISMATCH => true,
-        Mp3Diagnostic.TRUNCATED_STREAM   => true,
-        Mp3Diagnostic.DECODE_ERROR       => true,
-        Mp3Diagnostic.INIT_FAILED        => true,
-        _                                => false,
-    };
+    internal static bool IsError(Mp3Diagnostic d) =>
+        d switch
+        {
+            Mp3Diagnostic.FRAME_CRC_MISMATCH => true,
+            Mp3Diagnostic.TRUNCATED_STREAM => true,
+            Mp3Diagnostic.DECODE_ERROR => true,
+            Mp3Diagnostic.INIT_FAILED => true,
+            _ => false,
+        };
 }
 
 [SupportedOSPlatform("windows")]
@@ -82,18 +84,13 @@ public sealed class Mp3Checker : IFormatChecker
         return BuildResult([.. pass1, .. pass2]);
     }
 
-    private static CheckResult BuildResult(
-        List<(Mp3Diagnostic Diagnostic, long FrameIndex)> all
-    )
+    private static CheckResult BuildResult(List<(Mp3Diagnostic Diagnostic, long FrameIndex)> all)
     {
         if (all.Count == 0)
             return CheckResult.Ok();
 
         bool hasError = all.Any(d => Mp3DiagnosticInfo.IsError(d.Diagnostic));
-        string msg = string.Join(
-            ", ",
-            all.Select(d => d.Diagnostic.ToString()).Distinct()
-        );
+        string msg = string.Join(", ", all.Select(d => d.Diagnostic.ToString()).Distinct());
         long? frame = all[0].FrameIndex > 0 ? all[0].FrameIndex : null;
 
         return hasError

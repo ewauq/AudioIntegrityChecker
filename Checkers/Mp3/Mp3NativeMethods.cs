@@ -6,11 +6,11 @@ namespace AudioIntegrityChecker.Checkers.Mp3;
 [SupportedOSPlatform("windows")]
 internal static class Mp3NativeMethods
 {
-    internal const int MPG123_OK         =  0;
-    internal const int MPG123_DONE       = -12;
-    internal const int MPG123_ERR        = -1;
-    internal const int MPG123_NEW_FORMAT =  1;
-    internal const int MPG123_NEED_MORE  =  10;
+    internal const int MPG123_OK = 0;
+    internal const int MPG123_DONE = -12;
+    internal const int MPG123_ERR = -1;
+    internal const int MPG123_NEW_FORMAT = 1;
+    internal const int MPG123_NEED_MORE = 10;
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int mpg123_init();
