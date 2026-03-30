@@ -491,24 +491,8 @@ public sealed class MainForm : Form
                 stopwatch.Elapsed.TotalSeconds < 60
                     ? $"{stopwatch.Elapsed.TotalSeconds:F1}s"
                     : $"{(int)stopwatch.Elapsed.TotalMinutes}m {stopwatch.Elapsed.Seconds:D2}s";
-            var summaryParts = new List<string>();
-            if (_countCorruption > 0)
-                summaryParts.Add($"{_countCorruption} CORRUPTION");
-            if (_countError > 0)
-                summaryParts.Add($"{_countError} ERROR");
-            if (_countStructure > 0)
-                summaryParts.Add($"{_countStructure} STRUCTURE");
-            if (_countIndex > 0)
-                summaryParts.Add($"{_countIndex} INDEX");
-            if (_countMetadata > 0)
-                summaryParts.Add($"{_countMetadata} METADATA");
-            if (_countOk > 0)
-                summaryParts.Add($"{_countOk} OK");
-            string summary =
-                summaryParts.Count > 0 ? $"  —  {string.Join(" · ", summaryParts)}" : "";
-            SetStatus(
-                $"Processed {_completedFiles} file{(_completedFiles == 1 ? "" : "s")} in {timeText}{summary}"
-            );
+            int n = _completedFiles;
+            SetStatus($"Processed {(n == 1 ? "1 file" : $"{n} files")} in {timeText}.");
 
             ShowCompletionDialog(stopwatch.Elapsed);
         }
@@ -567,6 +551,7 @@ public sealed class MainForm : Form
         UpdateStatusBar();
         SetStatus("Drop audio files into the window and click Start scan.");
         SetAnalysing(false);
+        TrimWorkingSet();
     }
 
     private void SetAnalysing(bool active)
