@@ -191,7 +191,6 @@ public sealed class MainForm : Form
         _sepDuration = new ToolStripSeparator { Visible = false };
         _labelDuration = new ToolStripStatusLabel { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
-        var sepRam = new ToolStripSeparator();
         _labelRam = new ToolStripStatusLabel("RAM: —");
         var sepWorkers = new ToolStripSeparator();
         _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
@@ -199,6 +198,7 @@ public sealed class MainForm : Form
         _labelLibFlac = new ToolStripStatusLabel();
         var sepMpg123 = new ToolStripSeparator();
         _labelMpg123 = new ToolStripStatusLabel();
+        var spring = new ToolStripStatusLabel { Spring = true };
 
         _statusStrip = new StatusStrip();
         _statusStrip.Items.AddRange([
@@ -207,7 +207,7 @@ public sealed class MainForm : Form
             _labelSize,
             _sepDuration,
             _labelDuration,
-            sepRam,
+            spring,
             _labelRam,
             sepWorkers,
             _labelWorkers,
