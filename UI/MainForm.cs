@@ -62,8 +62,10 @@ public sealed class MainForm : Form
     private readonly ToolStripSeparator _sepDlls;
 
     private const int ColFormat = 2;
-    private const int ColStatus = 3;
-    private const int ColDetails = 4;
+    private const int ColResult = 3;
+    private const int ColSeverity = 4;
+    private const int ColCategory = 5;
+    private const int ColDetails = 6;
 
     private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 20;
@@ -99,11 +101,27 @@ public sealed class MainForm : Form
             new ColumnHeader
             {
                 Text = "Result",
+                Width = 55,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Severity",
                 Width = 75,
                 TextAlign = HorizontalAlignment.Center,
             }
         );
-        _listView.Columns.Add("Details", 450);
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Category",
+                Width = 90,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
+        _listView.Columns.Add("Details", 330);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
 
@@ -324,7 +342,9 @@ public sealed class MainForm : Form
             };
             item.SubItems.Add(Path.GetFileName(entry.FilePath));
             item.SubItems.Add(format);
-            item.SubItems.Add(""); // Status — empty until analysis
+            item.SubItems.Add(""); // Result
+            item.SubItems.Add(""); // Severity
+            item.SubItems.Add(""); // Category
             item.SubItems.Add(""); // Details
 
             _queuedFiles.Add(entry.FilePath);
@@ -439,8 +459,11 @@ public sealed class MainForm : Form
 
         foreach (ListViewItem item in _listView.Items)
         {
-            item.SubItems[ColStatus].ForeColor = _listView.ForeColor;
-            item.SubItems[ColStatus].Text = "Waiting...";
+            item.SubItems[ColResult].ForeColor = _listView.ForeColor;
+            item.SubItems[ColSeverity].ForeColor = _listView.ForeColor;
+            item.SubItems[ColResult].Text = "Waiting...";
+            item.SubItems[ColSeverity].Text = "";
+            item.SubItems[ColCategory].Text = "";
             item.SubItems[ColDetails].Text = "";
         }
 
@@ -587,8 +610,16 @@ public sealed class MainForm : Form
                 return;
 
             var result = args.Result;
-            item.SubItems[ColStatus].Text = result.Category.ToString().ToUpperInvariant();
-            item.SubItems[ColStatus].ForeColor = GetCategoryColor(result.Category);
+            bool isOk = result.Category == CheckCategory.Ok;
+            var severity = GetSeverity(result.Category);
+            var color = GetSeverityColor(severity);
+
+            item.SubItems[ColResult].Text = isOk ? "OK" : "ISSUE";
+            item.SubItems[ColResult].ForeColor = isOk ? Color.DarkGreen : color;
+            item.SubItems[ColSeverity].Text =
+                severity == ResultSeverity.None ? "" : severity.ToString();
+            item.SubItems[ColSeverity].ForeColor = color;
+            item.SubItems[ColCategory].Text = GetCategoryDisplayName(result.Category);
             item.SubItems[ColDetails].Text = BuildDetailsText(result);
             item.SubItems[ColDetails].Tag = result.ErrorMessage;
 
@@ -605,10 +636,10 @@ public sealed class MainForm : Form
         {
             if (!_itemByPath.TryGetValue(args.FilePath, out var item))
                 return;
-            var current = item.SubItems[ColStatus].Text;
-            if (current is "OK" or "METADATA" or "INDEX" or "STRUCTURE" or "CORRUPTION" or "ERROR")
+            var current = item.SubItems[ColResult].Text;
+            if (current is "OK" or "ISSUE")
                 return;
-            item.SubItems[ColStatus].Text = $"{(int)(args.Progress.Value * 100)}%";
+            item.SubItems[ColResult].Text = $"{(int)(args.Progress.Value * 100)}%";
         });
     }
 
@@ -825,15 +856,44 @@ public sealed class MainForm : Form
         return $"{bytes} B";
     }
 
-    private static Color GetCategoryColor(CheckCategory category) =>
+    private enum ResultSeverity
+    {
+        None,
+        Low,
+        Medium,
+        High,
+        Critical,
+    }
+
+    private static ResultSeverity GetSeverity(CheckCategory category) =>
         category switch
         {
-            CheckCategory.Ok => Color.DarkGreen,
-            CheckCategory.Index => Color.SteelBlue,
-            CheckCategory.Structure => Color.DarkOrange,
-            CheckCategory.Corruption => Color.Red,
-            CheckCategory.Error => Color.Purple,
+            CheckCategory.Metadata => ResultSeverity.Low,
+            CheckCategory.Index => ResultSeverity.Low,
+            CheckCategory.Structure => ResultSeverity.Medium,
+            CheckCategory.Error => ResultSeverity.High,
+            CheckCategory.Corruption => ResultSeverity.Critical,
+            _ => ResultSeverity.None,
+        };
+
+    private static Color GetSeverityColor(ResultSeverity severity) =>
+        severity switch
+        {
+            ResultSeverity.Medium => Color.Goldenrod,
+            ResultSeverity.High => Color.OrangeRed,
+            ResultSeverity.Critical => Color.Crimson,
             _ => SystemColors.WindowText,
+        };
+
+    private static string GetCategoryDisplayName(CheckCategory category) =>
+        category switch
+        {
+            CheckCategory.Metadata => "Metadata",
+            CheckCategory.Index => "Index",
+            CheckCategory.Structure => "Structural",
+            CheckCategory.Corruption => "Corruption",
+            CheckCategory.Error => "Error",
+            _ => "",
         };
 
     private static string GetDllStatus(string dllName)
