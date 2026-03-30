@@ -191,15 +191,16 @@ internal static class Mp3StructuralParser
         if (xingOffset + 8 > buf.Length)
             return;
 
-        // Detect "Xing" or "Info" signature
-        bool isXingInfo =
-            (buf[xingOffset]     == (byte)'X' && buf[xingOffset + 1] == (byte)'i' &&
-             buf[xingOffset + 2] == (byte)'n' && buf[xingOffset + 3] == (byte)'g')
-            ||
-            (buf[xingOffset]     == (byte)'I' && buf[xingOffset + 1] == (byte)'n' &&
-             buf[xingOffset + 2] == (byte)'f' && buf[xingOffset + 3] == (byte)'o');
+        // Detect "Xing" (VBR) or "Info" (CBR) signature
+        bool isXing =
+            buf[xingOffset]     == (byte)'X' && buf[xingOffset + 1] == (byte)'i' &&
+            buf[xingOffset + 2] == (byte)'n' && buf[xingOffset + 3] == (byte)'g';
 
-        if (!isXingInfo)
+        bool isInfo =
+            buf[xingOffset]     == (byte)'I' && buf[xingOffset + 1] == (byte)'n' &&
+            buf[xingOffset + 2] == (byte)'f' && buf[xingOffset + 3] == (byte)'o';
+
+        if (!isXing && !isInfo)
             return;
 
         // Read flags (big-endian uint32 at xingOffset+4)
@@ -208,9 +209,14 @@ internal static class Mp3StructuralParser
         // Bit 0: frame count field is present
         if ((flags & 0x01) != 0 && xingOffset + 12 <= buf.Length)
         {
-            uint xingFrameCount = ReadBigEndianUInt32(buf, xingOffset + 8);
-            if (xingFrameCount != (uint)actualFrameCount)
-                diagnostics.Add((Mp3Diagnostic.XING_FRAME_COUNT_MISMATCH, 0));
+            uint storedFrameCount = ReadBigEndianUInt32(buf, xingOffset + 8);
+            if (storedFrameCount != (uint)actualFrameCount)
+            {
+                var diag = isXing
+                    ? Mp3Diagnostic.XING_FRAME_COUNT_MISMATCH  // VBR
+                    : Mp3Diagnostic.INFO_FRAME_COUNT_MISMATCH; // CBR
+                diagnostics.Add((diag, 0));
+            }
         }
 
         // LAME tag: "LAME" signature at xingOffset + 120
