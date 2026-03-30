@@ -33,7 +33,7 @@ Analysis runs in two sequential passes on the same in-memory buffer.
 Every frame header is parsed and validated: sync word, MPEG version, Layer III marker, bitrate index, sample rate index. Frame sizes are computed and the parser walks the stream frame by frame, checking that each one starts exactly where expected.
 
 - CRC-protected frames (protection bit = 0) have their CRC-16 verified against the side information bytes.
-- The Xing/Info VBR header (if present) is checked: the declared frame count is compared against the actual count found during the scan.
+- The Xing header (VBR) or Info header (CBR), if present, is checked: the declared frame count is compared against the actual count found during the scan.
 - If a LAME tag is present, its CRC-16 (covering the first 190 bytes of the first frame) is verified.
 
 **Pass 2 — Full audio decode ([mpg123](https://www.mpg123.de/))**
@@ -73,7 +73,8 @@ If `mpg123.dll` is not found, Pass 2 is disabled and a warning is shown — Pass
 | `BAD_HEADER` | WARNING | 1 | Frame header with an invalid bitrate or sample rate index — parser skipped the frame | Likely intact | Run [mp3val](https://mp3val.sourceforge.net/) to strip or repair the offending frame |
 | `JUNK_DATA` | WARNING | 1 | 1–3 unexpected bytes between two otherwise valid frames (small alignment gap) | Likely intact | Run mp3val to strip the gap; usually left by editors or taggers |
 | `LOST_SYNC` | WARNING | 1 | Sync word missing at the expected position after a frame — larger gap, possibly cut or spliced audio | Likely intact | Run mp3val; if the file was spliced, re-download the original |
-| `XING_FRAME_COUNT_MISMATCH` | WARNING | 1 | The Xing/Info VBR header declares a different frame count than what the parser actually counted — seek table may be off | Likely intact | Rebuild the VBR header: mp3val `-f`, or foobar2000 → right-click → *Fix VBR MP3 header* |
+| `XING_FRAME_COUNT_MISMATCH` | WARNING | 1 | The Xing VBR header declares a different frame count than what the parser actually counted — seek table may be off | Likely intact | Rebuild the VBR header: mp3val `-f`, or foobar2000 → right-click → *Fix VBR MP3 header* |
+| `INFO_FRAME_COUNT_MISMATCH` | WARNING | 1 | The Info CBR header declares a different frame count than what the parser actually counted — header was likely written by a buggy encoder or editor | Likely intact | Run mp3val `-f` to rebuild the Info header |
 | `LAME_TAG_CRC_MISMATCH` | WARNING | 1 | The LAME tag embedded in the first frame has an invalid CRC — encoder metadata is unreliable | Likely intact | Rebuild the LAME tag with mp3val; does not affect audio content |
 | `TRUNCATED_STREAM` | ERROR | 1 | End of file reached mid-frame — the file was cut short | **Truncated** | Re-download; the file is incomplete. Partial audio up to the cut is playable |
 | `FRAME_CRC_MISMATCH` | ERROR | 1 | A CRC-protected frame's checksum doesn't match its side information — frame header or side data is wrong | **Corrupt** | Re-download or restore from backup — the affected frame's samples are wrong |
