@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using AudioIntegrityChecker.Checkers.Flac;
+using AudioIntegrityChecker.Checkers.Mp3;
 using AudioIntegrityChecker.Core;
 using AudioIntegrityChecker.Pipeline;
 
@@ -183,6 +184,7 @@ public sealed class MainForm : Form
         _cancelButton.Click += OnCancelClick;
 
         RegisterCheckers();
+        FormClosed += (_, _) => Mp3Mpg123Backend.Shutdown();
     }
 
     private void RegisterCheckers()
@@ -193,6 +195,16 @@ public sealed class MainForm : Form
             processFactory: () => new ProcessFlacChecker(),
             nativeAvailable: NativeFlacChecker.IsLibraryAvailable
         );
+
+        _registry.Register(
+            "MP3",
+            nativeFactory: () => new Mp3Checker(),
+            processFactory: () => new Mp3Checker(),
+            nativeAvailable: () => true // Mp3Checker handles mpg123 absence internally
+        );
+
+        if (!Mp3Mpg123Backend.IsLibraryAvailable())
+            SetStatus("mpg123.dll not found — MP3 decode verification disabled");
 
         _registry.Build();
     }
