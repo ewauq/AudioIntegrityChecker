@@ -32,11 +32,12 @@ public sealed class ProcessFlacChecker : IFormatChecker
     )
     {
         if (!File.Exists(filePath))
-            return CheckResult.Error("File not found.");
+            return CheckResult.Error("File not found.", CheckCategory.Error);
 
         if (!ToolAvailable(FlacExecutable))
             return CheckResult.Error(
-                $"{FlacExecutable} not found in PATH or application directory."
+                $"{FlacExecutable} not found in PATH or application directory.",
+                CheckCategory.Error
             );
 
         var (_, sampleRate) = FlacMetadataReader.TryReadStreamInfo(filePath);
@@ -100,7 +101,7 @@ public sealed class ProcessFlacChecker : IFormatChecker
                     process.Kill(entireProcessTree: true);
                 }
                 catch { }
-                return CheckResult.Error("Cancelled.");
+                return CheckResult.Error("Cancelled.", CheckCategory.Error);
             }
         }
 
@@ -116,6 +117,7 @@ public sealed class ProcessFlacChecker : IFormatChecker
 
             return CheckResult.Error(
                 firstErrorLine ?? $"flac.exe exited with code {process.ExitCode}",
+                CheckCategory.Corruption,
                 timecode,
                 errorSampleOffset
             );

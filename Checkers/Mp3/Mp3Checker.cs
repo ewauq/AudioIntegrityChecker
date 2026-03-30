@@ -17,7 +17,6 @@ internal enum Mp3Diagnostic
 
     // Pass 2 — decode
     DECODE_ERROR,
-    INIT_FAILED,
 }
 
 internal static class Mp3DiagnosticInfo
@@ -28,8 +27,22 @@ internal static class Mp3DiagnosticInfo
             Mp3Diagnostic.FRAME_CRC_MISMATCH => true,
             Mp3Diagnostic.TRUNCATED_STREAM => true,
             Mp3Diagnostic.DECODE_ERROR => true,
-            Mp3Diagnostic.INIT_FAILED => true,
             _ => false,
+        };
+
+    internal static CheckCategory GetCategory(Mp3Diagnostic d) =>
+        d switch
+        {
+            Mp3Diagnostic.LAME_TAG_CRC_MISMATCH => CheckCategory.Metadata,
+            Mp3Diagnostic.XING_FRAME_COUNT_MISMATCH => CheckCategory.Index,
+            Mp3Diagnostic.INFO_FRAME_COUNT_MISMATCH => CheckCategory.Index,
+            Mp3Diagnostic.JUNK_DATA => CheckCategory.Structure,
+            Mp3Diagnostic.BAD_HEADER => CheckCategory.Structure,
+            Mp3Diagnostic.LOST_SYNC => CheckCategory.Structure,
+            Mp3Diagnostic.FRAME_CRC_MISMATCH => CheckCategory.Corruption,
+            Mp3Diagnostic.DECODE_ERROR => CheckCategory.Corruption,
+            Mp3Diagnostic.TRUNCATED_STREAM => CheckCategory.Corruption,
+            _ => CheckCategory.Corruption,
         };
 }
 
@@ -45,7 +58,7 @@ public sealed class Mp3Checker : IFormatChecker
     )
     {
         if (!File.Exists(filePath))
-            return CheckResult.Error("File not found.");
+            return CheckResult.Error("File not found.", CheckCategory.Error);
 
         byte[] buf;
         try
@@ -54,22 +67,22 @@ public sealed class Mp3Checker : IFormatChecker
         }
         catch (OutOfMemoryException)
         {
-            return CheckResult.Error("File too large to load into memory.");
+            return CheckResult.Error("File too large to load into memory.", CheckCategory.Error);
         }
         catch (Exception ex)
         {
-            return CheckResult.Error($"Cannot read file: {ex.Message}");
+            return CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error);
         }
 
         progress.Report(0.10f);
         if (ct.IsCancellationRequested)
-            return CheckResult.Error("Cancelled.");
+            return CheckResult.Error("Cancelled.", CheckCategory.Error);
 
         // Pass 1 — structural parser (pure C#, no DLL)
         var pass1 = Mp3StructuralParser.Scan(buf);
         progress.Report(0.50f);
         if (ct.IsCancellationRequested)
-            return CheckResult.Error("Cancelled.");
+            return CheckResult.Error("Cancelled.", CheckCategory.Error);
 
         // If Pass 1 produced any ERROR, skip Pass 2 — file is already confirmed corrupt
         if (pass1.Any(d => Mp3DiagnosticInfo.IsError(d.Diagnostic)))
@@ -78,7 +91,15 @@ public sealed class Mp3Checker : IFormatChecker
         // Pass 2 — full audio decode via mpg123 (skipped if DLL unavailable)
         List<(Mp3Diagnostic Diagnostic, long FrameIndex)> pass2 = [];
         if (Mp3Mpg123Backend.IsLibraryAvailable() && Mp3Mpg123Backend.TryInitialize())
-            pass2 = Mp3Mpg123Backend.Decode(buf);
+        {
+            var decodeResult = Mp3Mpg123Backend.Decode(buf);
+            if (decodeResult is null)
+                return CheckResult.Error(
+                    "mpg123: failed to initialize decoder.",
+                    CheckCategory.Error
+                );
+            pass2 = decodeResult;
+        }
 
         progress.Report(1.0f);
         return BuildResult([.. pass1, .. pass2]);
@@ -93,8 +114,11 @@ public sealed class Mp3Checker : IFormatChecker
         string msg = string.Join(", ", all.Select(d => d.Diagnostic.ToString()).Distinct());
         long? frame = all[0].FrameIndex > 0 ? all[0].FrameIndex : null;
 
+        // Category is the worst across all diagnostics
+        var category = all.Select(d => Mp3DiagnosticInfo.GetCategory(d.Diagnostic)).Max();
+
         return hasError
-            ? CheckResult.Error(msg, null, frame)
-            : CheckResult.Warning(msg, null, frame);
+            ? CheckResult.Error(msg, category, null, frame)
+            : CheckResult.Warning(msg, category, null, frame);
     }
 }

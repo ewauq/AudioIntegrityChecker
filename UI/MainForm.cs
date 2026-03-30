@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Diagnostics;
+using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using AudioIntegrityChecker.Checkers.Flac;
@@ -23,8 +24,6 @@ public sealed class MainForm : Form
 
     private int _totalFiles;
     private int _completedFiles;
-    private int _errorCount;
-    private int _warningCount;
     private long _totalBytes;
     private TimeSpan _totalDuration;
 
@@ -48,6 +47,19 @@ public sealed class MainForm : Form
     private readonly ToolStripSeparator _sepSize;
     private readonly ToolStripSeparator _sepDuration;
     private readonly System.Windows.Forms.Timer _ramTimer;
+
+    // Per-category result counters — only written from the UI thread (BeginInvoke)
+    private int _countOk;
+    private int _countMetadata;
+    private int _countIndex;
+    private int _countStructure;
+    private int _countCorruption;
+    private int _countError;
+
+    // DLL / binary status (static, set once on startup)
+    private readonly ToolStripStatusLabel _labelLibFlac;
+    private readonly ToolStripStatusLabel _labelMpg123;
+    private readonly ToolStripSeparator _sepDlls;
 
     private const int ColFormat = 2;
     private const int ColStatus = 3;
@@ -75,8 +87,22 @@ public sealed class MainForm : Form
         };
         _listView.Columns.Add("Directory", 200);
         _listView.Columns.Add("File", 200);
-        _listView.Columns.Add("Format", 55);
-        _listView.Columns.Add("Status", 75);
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Format",
+                Width = 55,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Result",
+                Width = 75,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
         _listView.Columns.Add("Details", 450);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
@@ -104,7 +130,7 @@ public sealed class MainForm : Form
         };
         _statusLabel = new Label
         {
-            Text = "Drop audio files into the window to get started.",
+            Text = "Drop audio files into the window and click Start scan.",
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
             Width = 600,
@@ -151,6 +177,10 @@ public sealed class MainForm : Form
         _labelRam = new ToolStripStatusLabel("RAM: —");
         var sepWorkers = new ToolStripSeparator();
         _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
+        _sepDlls = new ToolStripSeparator();
+        _labelLibFlac = new ToolStripStatusLabel();
+        var sepMpg123 = new ToolStripSeparator();
+        _labelMpg123 = new ToolStripStatusLabel();
 
         _statusStrip = new StatusStrip();
         _statusStrip.Items.AddRange([
@@ -163,6 +193,10 @@ public sealed class MainForm : Form
             _labelRam,
             sepWorkers,
             _labelWorkers,
+            _sepDlls,
+            _labelLibFlac,
+            sepMpg123,
+            _labelMpg123,
         ]);
 
         _ramTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -184,6 +218,8 @@ public sealed class MainForm : Form
         _cancelButton.Click += OnCancelClick;
 
         RegisterCheckers();
+        _labelLibFlac.Text = $"libFLAC: {GetDllStatus("libFLAC.dll")}";
+        _labelMpg123.Text = $"mpg123: {GetDllStatus("mpg123.dll")}";
         FormClosed += (_, _) => Mp3Mpg123Backend.Shutdown();
     }
 
@@ -202,9 +238,6 @@ public sealed class MainForm : Form
             processFactory: () => new Mp3Checker(),
             nativeAvailable: () => true // Mp3Checker handles mpg123 absence internally
         );
-
-        if (!Mp3Mpg123Backend.IsLibraryAvailable())
-            SetStatus("mpg123.dll not found — MP3 decode verification disabled");
 
         _registry.Build();
     }
@@ -280,14 +313,15 @@ public sealed class MainForm : Form
         if (cancellationToken.IsCancellationRequested)
             return;
 
-        var accepted = entries.Where(e => !e.Skipped).ToList();
-        int skipped = entries.Count(e => e.Skipped);
-
         _listView.BeginUpdate();
-        foreach (var entry in accepted)
+        foreach (var entry in entries)
         {
             var format = _registry.Resolve(entry.FilePath)?.FormatId ?? entry.Format;
-            var item = new ListViewItem(entry.DirectoryName) { ToolTipText = entry.FilePath };
+            var item = new ListViewItem(entry.DirectoryName)
+            {
+                ToolTipText = entry.FilePath,
+                UseItemStyleForSubItems = false,
+            };
             item.SubItems.Add(Path.GetFileName(entry.FilePath));
             item.SubItems.Add(format);
             item.SubItems.Add(""); // Status — empty until analysis
@@ -304,10 +338,7 @@ public sealed class MainForm : Form
         _listView.EndUpdate();
 
         int fileCount = _queuedFiles.Count;
-        string statusMessage = $"{fileCount} file(s) queued.";
-        if (skipped > 0)
-            statusMessage += $"  {skipped} unsupported ignored.";
-        SetStatus(statusMessage);
+        SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
         UpdateStatusBar();
         SetAnalysing(false);
@@ -332,24 +363,12 @@ public sealed class MainForm : Form
             if (++counter % 50 == 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                scanProgress?.Report(entries.Count(e => !e.Skipped));
+                scanProgress?.Report(entries.Count);
             }
 
             var extension = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
             if (!supportedExtensions.Contains(extension))
-            {
-                entries.Add(
-                    new FileEntry(
-                        filePath,
-                        "",
-                        extension.ToUpperInvariant(),
-                        0,
-                        null,
-                        Skipped: true
-                    )
-                );
                 return;
-            }
 
             long bytes = 0;
             try
@@ -371,8 +390,7 @@ public sealed class MainForm : Form
                     directoryName,
                     extension.ToUpperInvariant(),
                     bytes,
-                    duration,
-                    Skipped: false
+                    duration
                 )
             );
         }
@@ -401,8 +419,7 @@ public sealed class MainForm : Form
         string DirectoryName,
         string Format,
         long Bytes,
-        TimeSpan? Duration,
-        bool Skipped
+        TimeSpan? Duration
     );
 
     private async void OnStartClick(object? sender, EventArgs e)
@@ -411,15 +428,18 @@ public sealed class MainForm : Form
             return;
 
         SetAnalysing(true);
-        _errorCount = 0;
-        _warningCount = 0;
+        _countOk = 0;
+        _countMetadata = 0;
+        _countIndex = 0;
+        _countStructure = 0;
+        _countCorruption = 0;
+        _countError = 0;
         _totalFiles = _queuedFiles.Count;
         _completedFiles = 0;
 
-        var defaultForeColor = _listView.ForeColor;
         foreach (ListViewItem item in _listView.Items)
         {
-            item.ForeColor = defaultForeColor;
+            item.SubItems[ColStatus].ForeColor = _listView.ForeColor;
             item.SubItems[ColStatus].Text = "Waiting...";
             item.SubItems[ColDetails].Text = "";
         }
@@ -444,19 +464,25 @@ public sealed class MainForm : Form
             await _pipeline.RunAsync(_queuedFiles, _analysisCts.Token, globalProgress);
             stopwatch.Stop();
 
-            int okCount = _completedFiles - _errorCount - _warningCount;
-            var parts = new List<string>();
-            if (_errorCount > 0)
-                parts.Add($"{_errorCount} error{(_errorCount == 1 ? "" : "s")}");
-            if (_warningCount > 0)
-                parts.Add($"{_warningCount} warning{(_warningCount == 1 ? "" : "s")}");
-            if (okCount > 0)
-                parts.Add($"{okCount} OK");
             string timeText =
                 stopwatch.Elapsed.TotalSeconds < 60
                     ? $"{stopwatch.Elapsed.TotalSeconds:F1}s"
                     : $"{(int)stopwatch.Elapsed.TotalMinutes}m {stopwatch.Elapsed.Seconds:D2}s";
-            string summary = parts.Count > 0 ? $" ({string.Join(", ", parts)})" : "";
+            var summaryParts = new List<string>();
+            if (_countCorruption > 0)
+                summaryParts.Add($"{_countCorruption} CORRUPTION");
+            if (_countError > 0)
+                summaryParts.Add($"{_countError} ERROR");
+            if (_countStructure > 0)
+                summaryParts.Add($"{_countStructure} STRUCTURE");
+            if (_countIndex > 0)
+                summaryParts.Add($"{_countIndex} INDEX");
+            if (_countMetadata > 0)
+                summaryParts.Add($"{_countMetadata} METADATA");
+            if (_countOk > 0)
+                summaryParts.Add($"{_countOk} OK");
+            string summary =
+                summaryParts.Count > 0 ? $"  —  {string.Join(" · ", summaryParts)}" : "";
             SetStatus(
                 $"Processed {_completedFiles} file{(_completedFiles == 1 ? "" : "s")} in {timeText}{summary}"
             );
@@ -508,11 +534,15 @@ public sealed class MainForm : Form
         _totalDuration = TimeSpan.Zero;
         _totalFiles = 0;
         _completedFiles = 0;
-        _errorCount = 0;
-        _warningCount = 0;
+        _countOk = 0;
+        _countMetadata = 0;
+        _countIndex = 0;
+        _countStructure = 0;
+        _countCorruption = 0;
+        _countError = 0;
 
         UpdateStatusBar();
-        SetStatus("Drop audio files into the window to get started.");
+        SetStatus("Drop audio files into the window and click Start scan.");
         SetAnalysing(false);
     }
 
@@ -526,36 +556,46 @@ public sealed class MainForm : Form
 
     private void OnFileCompleted(FileCompletedEventArgs args)
     {
-        Interlocked.Increment(ref _completedFiles);
-
-        var result = args.Result;
-        if (!result.IsValid && !result.IsSkipped)
-            Interlocked.Increment(ref _errorCount);
-        if (result.IsWarning)
-            Interlocked.Increment(ref _warningCount);
+        // Increment all counters on the worker thread so they are visible to the await
+        // continuation via the task memory barrier — no BeginInvoke delay needed.
+        int completed = Interlocked.Increment(ref _completedFiles);
+        switch (args.Result.Category)
+        {
+            case CheckCategory.Ok:
+                Interlocked.Increment(ref _countOk);
+                break;
+            case CheckCategory.Metadata:
+                Interlocked.Increment(ref _countMetadata);
+                break;
+            case CheckCategory.Index:
+                Interlocked.Increment(ref _countIndex);
+                break;
+            case CheckCategory.Structure:
+                Interlocked.Increment(ref _countStructure);
+                break;
+            case CheckCategory.Corruption:
+                Interlocked.Increment(ref _countCorruption);
+                break;
+            case CheckCategory.Error:
+                Interlocked.Increment(ref _countError);
+                break;
+        }
 
         BeginInvoke(() =>
         {
-            string status =
-                result.IsSkipped ? "SKIPPED"
-                : result.IsWarning ? "WARNING"
-                : result.IsValid ? "OK"
-                : "ERROR";
-
             if (!_itemByPath.TryGetValue(args.FilePath, out var item))
                 return;
 
-            item.SubItems[ColStatus].Text = status;
+            var result = args.Result;
+            item.SubItems[ColStatus].Text = result.Category.ToString().ToUpperInvariant();
+            item.SubItems[ColStatus].ForeColor = GetCategoryColor(result.Category);
             item.SubItems[ColDetails].Text = BuildDetailsText(result);
             item.SubItems[ColDetails].Tag = result.ErrorMessage;
 
-            if (status == "ERROR")
-                item.ForeColor = Color.Red;
-            if (status == "WARNING")
-                item.ForeColor = Color.DarkOrange;
-
-            int completed = _completedFiles;
-            SetStatus($"Processing: {completed}/{_totalFiles}");
+            // Stop updating the status label once all files are accounted for —
+            // the await continuation will overwrite it with the final summary.
+            if (completed < _totalFiles)
+                SetStatus($"Processing: {completed}/{_totalFiles}");
         });
     }
 
@@ -566,7 +606,7 @@ public sealed class MainForm : Form
             if (!_itemByPath.TryGetValue(args.FilePath, out var item))
                 return;
             var current = item.SubItems[ColStatus].Text;
-            if (current is "OK" or "ERROR" or "WARNING" or "SKIPPED")
+            if (current is "OK" or "METADATA" or "INDEX" or "STRUCTURE" or "CORRUPTION" or "ERROR")
                 return;
             item.SubItems[ColStatus].Text = $"{(int)(args.Progress.Value * 100)}%";
         });
@@ -605,25 +645,38 @@ public sealed class MainForm : Form
         );
         builder.AppendLine();
 
-        if (_errorCount == 0 && _warningCount == 0)
+        bool hasSevere = _countCorruption > 0 || _countError > 0;
+        bool hasMinor = _countStructure > 0 || _countIndex > 0 || _countMetadata > 0;
+
+        if (!hasSevere && !hasMinor)
         {
-            builder.Append("No errors found.");
+            builder.Append("All files OK.");
         }
         else
         {
-            if (_errorCount > 0)
+            if (_countCorruption > 0)
                 builder.AppendLine(
-                    $"{_errorCount} error{(_errorCount == 1 ? "" : "s")} found: audio data corrupt."
+                    $"{_countCorruption} CORRUPTION — audio data demonstrably damaged."
                 );
-            if (_warningCount > 0)
+            if (_countError > 0)
+                builder.AppendLine(
+                    $"{_countError} ERROR — analysis tool failed, file state unknown."
+                );
+            if (_countStructure > 0)
+                builder.AppendLine(
+                    $"{_countStructure} STRUCTURE — stream anomaly, audio likely intact."
+                );
+            if (_countIndex > 0)
+                builder.AppendLine($"{_countIndex} INDEX — seek/frame count mismatch.");
+            if (_countMetadata > 0)
                 builder.Append(
-                    $"{_warningCount} warning{(_warningCount == 1 ? "" : "s")}: audio likely intact, minor structural issues."
+                    $"{_countMetadata} METADATA — tag inconsistency, no playback impact."
                 );
         }
 
         var icon =
-            _errorCount > 0 ? MessageBoxIcon.Error
-            : _warningCount > 0 ? MessageBoxIcon.Warning
+            hasSevere ? MessageBoxIcon.Error
+            : hasMinor ? MessageBoxIcon.Warning
             : MessageBoxIcon.Information;
 
         MessageBox.Show(
@@ -636,8 +689,6 @@ public sealed class MainForm : Form
 
     private static string BuildDetailsText(CheckResult result)
     {
-        if (result.IsSkipped)
-            return result.ErrorMessage ?? string.Empty;
         if (result.IsValid && !result.IsWarning)
             return string.Empty;
 
@@ -739,9 +790,14 @@ public sealed class MainForm : Form
 
     private static void TrimWorkingSet()
     {
-        // Passing -1/-1 instructs Windows to trim the process working set.
-        // This is a cosmetic operation (pages become eligible for paging out)
-        // and does not force any managed heap collection.
+        // Force a full Gen2 GC with LOH compaction to reclaim the large byte[] buffers
+        // (File.ReadAllBytes per file) that accumulated on the Large Object Heap during analysis.
+        // Without this, those buffers are eligible but won't be collected until the runtime
+        // decides to run a Gen2 sweep on its own, which may not happen for a long time.
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+
+        // Then tell Windows the now-empty pages can be paged out.
         SetProcessWorkingSetSize(
             Process.GetCurrentProcess().Handle,
             new IntPtr(-1),
@@ -767,6 +823,34 @@ public sealed class MainForm : Form
         if (bytes >= 1_024L)
             return $"{bytes / 1_024.0:F1} KB";
         return $"{bytes} B";
+    }
+
+    private static Color GetCategoryColor(CheckCategory category) =>
+        category switch
+        {
+            CheckCategory.Ok => Color.DarkGreen,
+            CheckCategory.Index => Color.SteelBlue,
+            CheckCategory.Structure => Color.DarkOrange,
+            CheckCategory.Corruption => Color.Red,
+            CheckCategory.Error => Color.Purple,
+            _ => SystemColors.WindowText,
+        };
+
+    private static string GetDllStatus(string dllName)
+    {
+        if (File.Exists(Path.Combine(AppContext.BaseDirectory, dllName)))
+            return "found";
+
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (
+            var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+        )
+        {
+            if (File.Exists(Path.Combine(dir.Trim(), dllName)))
+                return "found";
+        }
+
+        return "not found";
     }
 
     private void SetStatus(string message) => _statusLabel.Text = message;

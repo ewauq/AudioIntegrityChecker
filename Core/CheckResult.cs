@@ -11,19 +11,18 @@ public record CheckResult(
 
     public static CheckResult Warning(
         string message,
+        CheckCategory category,
         TimeSpan? timecode = null,
         long? frameIndex = null
-    ) => new(true, message, timecode, frameIndex) { IsWarning = true };
+    ) => new(true, message, timecode, frameIndex) { IsWarning = true, Category = category };
 
     public static CheckResult Error(
         string message,
+        CheckCategory category,
         TimeSpan? timecode = null,
         long? frameIndex = null
-    ) => new(false, message, timecode, frameIndex);
-
-    public static CheckResult Skipped(string reason) =>
-        new(true, reason, null, null) { IsSkipped = true };
+    ) => new(false, message, timecode, frameIndex) { Category = category };
 
     public bool IsWarning { get; private init; }
-    public bool IsSkipped { get; private init; }
+    public CheckCategory Category { get; init; } = CheckCategory.Ok;
 }

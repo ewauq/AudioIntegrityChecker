@@ -56,26 +56,25 @@ internal static class Mp3Mpg123Backend
         }
     }
 
-    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)> Decode(byte[] fileBuffer)
+    /// <summary>
+    /// Decodes the file buffer via mpg123 and returns a list of diagnostics.
+    /// Returns <see langword="null"/> if the decoder handle could not be created or opened,
+    /// indicating an infrastructure failure rather than a file problem.
+    /// </summary>
+    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)>? Decode(byte[] fileBuffer)
     {
         var diagnostics = new List<(Mp3Diagnostic, long)>();
 
         int error = 0;
         IntPtr mh = Mp3NativeMethods.mpg123_new(null, ref error);
         if (mh == IntPtr.Zero)
-        {
-            diagnostics.Add((Mp3Diagnostic.INIT_FAILED, 0));
-            return diagnostics;
-        }
+            return null;
 
         try
         {
             int rc = Mp3NativeMethods.mpg123_open_feed(mh);
             if (rc != Mp3NativeMethods.MPG123_OK)
-            {
-                diagnostics.Add((Mp3Diagnostic.INIT_FAILED, 0));
-                return diagnostics;
-            }
+                return null;
 
             Mp3NativeMethods.mpg123_feed(mh, fileBuffer, (nuint)fileBuffer.Length);
 
