@@ -243,8 +243,11 @@ public sealed class MainForm : Form
         _cancelButton.Click += OnCancelClick;
 
         RegisterCheckers();
-        _labelLibFlac.Text = $"libFLAC: {GetDllStatus("libFLAC.dll")}";
-        _labelMpg123.Text = $"mpg123: {GetDllStatus("mpg123.dll")}";
+
+        _labelLibFlac.Text =
+            $"libFLAC: {(NativeFlacChecker.IsLibraryAvailable() ? "available" : "not available")}";
+        _labelMpg123.Text =
+            $"mpg123: {(Mp3Mpg123Backend.IsLibraryAvailable() ? "available" : "not available")}";
         // Cancel any in-flight work before the form is destroyed so that mpg123
         // worker calls finish before Shutdown() tears down the native library.
         FormClosing += (_, _) =>
