@@ -391,7 +391,7 @@ public sealed class MainForm : Form
         foreach (ListViewItem item in _listView.Items)
         {
             item.SubItems[ColSeverity].ForeColor = _listView.ForeColor;
-            item.SubItems[ColResult].Text = "Waiting...";
+            item.SubItems[ColResult].Text = "Pending...";
             item.SubItems[ColSeverity].Text = "";
             item.SubItems[ColCategory].Text = "";
             item.SubItems[ColDetails].Text = "";
