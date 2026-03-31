@@ -156,8 +156,10 @@ internal static class Mp3StructuralParser
 
             int bitrate = (version == 3 ? Mpeg1L3Bitrate : Mpeg2L3Bitrate)[bitrateIdx] * 1000; // version 3 = MPEG1; table is kbps → bps
             int sampleRate = SampleRates[version][srIdx];
-            // Frame size formula from ISO 11172-3: 144 = samples_per_frame / bits_per_byte = 1152 / 8
-            int frameSize = (144 * bitrate / sampleRate) + paddingBit;
+            // MPEG-1 Layer III:       1152 samples/frame → coefficient 144 (1152/8)
+            // MPEG-2 / MPEG-2.5 L3:   576 samples/frame → coefficient  72  (576/8)
+            int coefficient = version == 3 ? 144 : 72;
+            int frameSize = (coefficient * bitrate / sampleRate) + paddingBit;
 
             if (frameSize < 4)
             {
