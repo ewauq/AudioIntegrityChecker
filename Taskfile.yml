@@ -2,9 +2,9 @@ version: '3'
 
 tasks:
   clean:
-    desc: Remove all build artifacts and temporary files (bin/, obj/, .vs/)
+    desc: Remove all build artifacts and temporary files (bin/, obj/, .vs/, dist/)
     cmds:
-      - powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue bin, obj, .vs"
+      - powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue bin, obj, .vs, dist"
       - powershell -NoProfile -Command "Get-ChildItem -Filter '*.user' -File | Remove-Item -Force -ErrorAction SilentlyContinue"
 
   build:
