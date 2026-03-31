@@ -55,46 +55,46 @@ internal static class ResultFormatting
 
         // Check in severity order so the most critical diagnostic wins when multiple are present.
         if (msg.Contains("FRAME_CRC_MISMATCH"))
-            return "Audio data corrupted";
+            return "Audio data is corrupted";
         if (msg.Contains("TRUNCATED_STREAM"))
-            return "File truncated";
+            return "File appears to be incomplete or cut off";
         if (msg.Contains("DECODE_ERROR"))
-            return "Decode failure";
+            return "Audio could not be decoded";
         if (msg.Contains("UNPARSEABLE_STREAM"))
-            return "Unreadable stream";
+            return "Audio stream could not be read";
         if (msg.Contains("LOST_SYNC"))
-            return "Sync lost";
+            return "Audio stream is interrupted mid-file";
         if (msg.Contains("BAD_HEADER"))
-            return "Invalid header";
+            return "A frame header is malformed";
         if (msg.Contains("JUNK_DATA"))
-            return "Junk data present";
+            return "File contains unexpected extra data";
         if (msg.Contains("XING_FRAME_COUNT_MISMATCH"))
-            return "VBR index incorrect";
+            return "Variable bitrate index does not match the content";
         if (msg.Contains("INFO_FRAME_COUNT_MISMATCH"))
-            return "CBR index incorrect";
+            return "Constant bitrate index does not match the content";
         if (msg.Contains("LAME_TAG_CRC_MISMATCH"))
-            return "LAME tag CRC error";
+            return "Encoder metadata checksum is invalid";
 
         // Generic error messages from the checker infrastructure
         if (msg.Contains("not found"))
-            return "File not found";
+            return "File could not be found";
         if (msg.Contains("too large"))
-            return "File too large";
+            return "File is too large to be analysed";
         if (msg.Contains("Cannot read"))
-            return "Cannot read file";
+            return "File could not be read";
         if (msg.Contains("Cancelled"))
-            return "Cancelled";
+            return "Analysis was cancelled";
         if (msg.Contains("end of stream"))
-            return "Incomplete decode";
+            return "Decoder did not reach the end of the file";
 
         // Category fallback
         return result.Category switch
         {
-            CheckCategory.Corruption => "Audio data corrupted",
-            CheckCategory.Error => "Analysis failed",
-            CheckCategory.Structure => "Stream anomaly",
-            CheckCategory.Index => "Index mismatch",
-            CheckCategory.Metadata => "Tag inconsistency",
+            CheckCategory.Corruption => "Audio data is corrupted",
+            CheckCategory.Error => "Analysis could not complete",
+            CheckCategory.Structure => "Stream structure issue detected",
+            CheckCategory.Index => "Seek index does not match the content",
+            CheckCategory.Metadata => "Metadata tag inconsistency detected",
             _ => string.Empty,
         };
     }
