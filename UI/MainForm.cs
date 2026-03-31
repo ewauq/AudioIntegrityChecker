@@ -94,7 +94,7 @@ public sealed class MainForm : Form
             {
                 Text = "Duration",
                 Width = 65,
-                TextAlign = HorizontalAlignment.Right,
+                TextAlign = HorizontalAlignment.Center,
             }
         );
         _listView.Columns.Add(
@@ -109,7 +109,7 @@ public sealed class MainForm : Form
             new ColumnHeader
             {
                 Text = "Result",
-                Width = 55,
+                Width = 58,
                 TextAlign = HorizontalAlignment.Center,
             }
         );
@@ -125,7 +125,7 @@ public sealed class MainForm : Form
             new ColumnHeader
             {
                 Text = "Category",
-                Width = 90,
+                Width = 82,
                 TextAlign = HorizontalAlignment.Center,
             }
         );
