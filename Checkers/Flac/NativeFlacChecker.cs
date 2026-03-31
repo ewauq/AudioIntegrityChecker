@@ -259,8 +259,8 @@ public sealed class NativeFlacChecker : IFormatChecker
                     && state.ErrorAtSample >= state.TotalSamples;
 
                 string message = isTrailingGarbage
-                    ? "FLAC: TRAILING_GARBAGE"
-                    : $"FLAC: {ErrorStatusName(state.ErrorStatus)}";
+                    ? "TRAILING_GARBAGE"
+                    : ErrorStatusName(state.ErrorStatus);
 
                 // status 0 (LOST_SYNC) and 1 (BAD_HEADER) → stream structure anomaly
                 // status 2 (FRAME_CRC_MISMATCH) and 3 (UNPARSEABLE_STREAM) → audio data corrupt
