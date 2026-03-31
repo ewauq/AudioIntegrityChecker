@@ -244,8 +244,8 @@ public sealed class MainForm : Form
         _cancelButton.Click += OnCancelClick;
 
         RegisterCheckers();
-        _labelLibFlac.Text = $"libFLAC: {GetDllStatus("libFLAC.dll")}";
-        _labelMpg123.Text = $"mpg123: {GetDllStatus("mpg123.dll")}";
+        _labelLibFlac.Text = $"libFLAC: {(NativeFlacChecker.IsLibraryAvailable() ? "available" : "not available")}";
+        _labelMpg123.Text = $"mpg123: {(Mp3Mpg123Backend.IsLibraryAvailable() ? "available" : "not available")}";
         FormClosed += (_, _) => Mp3Mpg123Backend.Shutdown();
     }
 
