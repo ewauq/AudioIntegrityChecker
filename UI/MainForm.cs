@@ -65,7 +65,8 @@ public sealed class MainForm : Form
     private const int ColResult = 4;
     private const int ColSeverity = 5;
     private const int ColCategory = 6;
-    private const int ColDetails = 7;
+    private const int ColMessage = 7;
+    private const int ColDetails = 8;
 
     private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 20;
@@ -129,7 +130,8 @@ public sealed class MainForm : Form
                 TextAlign = HorizontalAlignment.Center,
             }
         );
-        _listView.Columns.Add("Details", 330);
+        _listView.Columns.Add("Message", 180);
+        _listView.Columns.Add("Details", 260);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
 
@@ -354,6 +356,7 @@ public sealed class MainForm : Form
             item.SubItems.Add(""); // Result
             item.SubItems.Add(""); // Severity
             item.SubItems.Add(""); // Category
+            item.SubItems.Add(""); // Message
             item.SubItems.Add(""); // Details
 
             _queuedFiles.Add(entry.FilePath);
@@ -394,6 +397,7 @@ public sealed class MainForm : Form
             item.SubItems[ColResult].Text = "Pending...";
             item.SubItems[ColSeverity].Text = "";
             item.SubItems[ColCategory].Text = "";
+            item.SubItems[ColMessage].Text = "";
             item.SubItems[ColDetails].Text = "";
         }
 
@@ -536,6 +540,7 @@ public sealed class MainForm : Form
             item.SubItems[ColCategory].Text = ResultFormatting.GetCategoryDisplayName(
                 result.Category
             );
+            item.SubItems[ColMessage].Text = ResultFormatting.BuildMessageText(result);
             item.SubItems[ColDetails].Text = ResultFormatting.BuildDetailsText(result);
             item.SubItems[ColDetails].Tag = result.ErrorMessage;
 
