@@ -127,9 +127,9 @@ Fix: launch the exe directly by double-clicking it from Explorer, or ensure your
 
 **MP3 files are only partially checked — status bar shows `mpg123: not found`**
 
-Pass 2 (full audio decode) requires `mpg123.dll` placed next to the exe. Without it, only the structural Pass 1 runs. Download the x64 build from [mpg123.de](https://www.mpg123.de/download.shtml) and place `mpg123.dll` alongside the exe.
+Pass 2 (full audio decode) requires `mpg123.dll` to be loadable by Windows (for example, placed next to the exe or in a directory on your `PATH`). Without it, only the structural Pass 1 runs. Download the x64 build from [mpg123.de](https://www.mpg123.de/download.shtml) and typically place `mpg123.dll` alongside the exe for the most reliable detection.
 
-If `mpg123.dll` is present but the warning still appears, the DLL may be built for the wrong architecture (32-bit vs 64-bit). This application requires the x64 build.
+If `mpg123.dll` is present in one of the searched locations but the warning still appears, the DLL may be built for the wrong architecture (32-bit vs 64-bit). This application requires the x64 build.
 
 ---
 
