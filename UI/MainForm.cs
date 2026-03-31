@@ -66,9 +66,8 @@ public sealed class MainForm : Form
     private const int ColFormat = 3;
     private const int ColResult = 4;
     private const int ColSeverity = 5;
-    private const int ColCategory = 6;
-    private const int ColMessage = 7;
-    private const int ColDetails = 8;
+    private const int ColMessage = 6;
+    private const int ColError = 7;
 
     private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 20;
@@ -125,16 +124,8 @@ public sealed class MainForm : Form
                 TextAlign = HorizontalAlignment.Center,
             }
         );
-        _listView.Columns.Add(
-            new ColumnHeader
-            {
-                Text = "Category",
-                Width = 82,
-                TextAlign = HorizontalAlignment.Center,
-            }
-        );
-        _listView.Columns.Add("Message", 180);
-        _listView.Columns.Add("Details", 260);
+        _listView.Columns.Add("Message", 420);
+        _listView.Columns.Add("Error", 200);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
         _listView.KeyDown += OnListViewKeyDown;
@@ -362,9 +353,8 @@ public sealed class MainForm : Form
             item.SubItems.Add(format);
             item.SubItems.Add(""); // Result
             item.SubItems.Add(""); // Severity
-            item.SubItems.Add(""); // Category
             item.SubItems.Add(""); // Message
-            item.SubItems.Add(""); // Details
+            item.SubItems.Add(""); // Error
 
             _queuedFiles.Add(entry.FilePath);
             _itemByPath[entry.FilePath] = item;
@@ -403,9 +393,8 @@ public sealed class MainForm : Form
             item.SubItems[ColSeverity].ForeColor = _listView.ForeColor;
             item.SubItems[ColResult].Text = "Pending...";
             item.SubItems[ColSeverity].Text = "";
-            item.SubItems[ColCategory].Text = "";
             item.SubItems[ColMessage].Text = "";
-            item.SubItems[ColDetails].Text = "";
+            item.SubItems[ColError].Text = "";
         }
 
         _globalBar.Value = 0;
@@ -544,12 +533,8 @@ public sealed class MainForm : Form
             item.SubItems[ColSeverity].Text =
                 severity == ResultSeverity.None ? "" : severity.ToString();
             item.SubItems[ColSeverity].ForeColor = color;
-            item.SubItems[ColCategory].Text = ResultFormatting.GetCategoryDisplayName(
-                result.Category
-            );
-            item.SubItems[ColMessage].Text = ResultFormatting.BuildMessageText(result);
-            item.SubItems[ColDetails].Text = ResultFormatting.BuildDetailsText(result);
-            item.SubItems[ColDetails].Tag = result.ErrorMessage;
+            item.SubItems[ColMessage].Text = ResultFormatting.BuildMessageColumnText(result);
+            item.SubItems[ColError].Text = result.ErrorMessage ?? string.Empty;
 
             // Stop updating the status label once all files are accounted for —
             // the await continuation will overwrite it with the final summary.
@@ -774,7 +759,8 @@ public sealed class MainForm : Form
         [property: JsonPropertyName("duration")] string? Duration,
         [property: JsonPropertyName("format")] string Format,
         [property: JsonPropertyName("result")] string Result,
-        [property: JsonPropertyName("message")] string Message
+        [property: JsonPropertyName("message")] string Message,
+        [property: JsonPropertyName("error")] string? Error
     );
 
     private static readonly JsonSerializerOptions JsonExportOptions = new()
@@ -799,22 +785,6 @@ public sealed class MainForm : Form
         {
             var path = item.ToolTipText;
             var result = item.SubItems[ColResult].Text;
-            var category = item.SubItems[ColCategory].Text;
-            var msg = item.SubItems[ColMessage].Text;
-            var details = item.SubItems[ColDetails].Text;
-
-            string combined;
-            if (result == "OK")
-            {
-                combined = string.Empty;
-            }
-            else
-            {
-                combined = string.IsNullOrEmpty(category) ? msg : $"{category}: {msg}";
-                if (!string.IsNullOrEmpty(details))
-                    combined += $" ({details})";
-            }
-
             var duration = item.SubItems[ColDuration].Text;
             entries.Add(
                 new ClipboardEntry(
@@ -823,7 +793,8 @@ public sealed class MainForm : Form
                     Duration: string.IsNullOrEmpty(duration) ? null : duration,
                     Format: item.SubItems[ColFormat].Text,
                     Result: result,
-                    Message: combined
+                    Message: item.SubItems[ColMessage].Text,
+                    Error: item.SubItems[ColError].Text is { Length: > 0 } e ? e : null
                 )
             );
         }

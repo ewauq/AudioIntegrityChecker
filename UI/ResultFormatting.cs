@@ -35,17 +35,6 @@ internal static class ResultFormatting
             _ => SystemColors.WindowText,
         };
 
-    internal static string GetCategoryDisplayName(CheckCategory category) =>
-        category switch
-        {
-            CheckCategory.Metadata => "Metadata",
-            CheckCategory.Index => "Index",
-            CheckCategory.Structure => "Structural",
-            CheckCategory.Corruption => "Corruption",
-            CheckCategory.Error => "Error",
-            _ => "",
-        };
-
     internal static string BuildMessageText(CheckResult result)
     {
         if (result.Category == CheckCategory.Ok)
@@ -62,6 +51,8 @@ internal static class ResultFormatting
             return "Audio could not be decoded";
         if (msg.Contains("UNPARSEABLE_STREAM"))
             return "Audio stream could not be read";
+        if (msg.Contains("TRAILING_GARBAGE"))
+            return "Non-audio data found at the end of the file";
         if (msg.Contains("LOST_SYNC"))
             return "Audio stream is interrupted mid-file";
         if (msg.Contains("BAD_HEADER"))
@@ -99,22 +90,27 @@ internal static class ResultFormatting
         };
     }
 
-    internal static string BuildDetailsText(CheckResult result)
+    internal static string BuildMessageColumnText(CheckResult result)
     {
         if (result.Category == CheckCategory.Ok)
             return string.Empty;
 
+        var message = BuildMessageText(result);
+        var positional = BuildPositionalText(result);
+        return string.IsNullOrEmpty(positional) ? message : $"{message}  {positional}";
+    }
+
+    private static string BuildPositionalText(CheckResult result)
+    {
         var builder = new System.Text.StringBuilder();
         if (result.ErrorTimecode.HasValue)
-            builder.Append($"@ {result.ErrorTimecode.Value:hh\\:mm\\:ss\\.fff}  ");
+            builder.Append($"@ {result.ErrorTimecode.Value:hh\\:mm\\:ss\\.fff}");
         if (result.ErrorFrameIndex.HasValue)
-            builder.Append($"[frame {result.ErrorFrameIndex.Value}]  ");
-        if (!string.IsNullOrEmpty(result.ErrorMessage))
         {
             if (builder.Length > 0)
-                builder.Append("— ");
-            builder.Append(result.ErrorMessage);
+                builder.Append("  ");
+            builder.Append($"[frame {result.ErrorFrameIndex.Value}]");
         }
-        return builder.ToString().TrimEnd();
+        return builder.ToString();
     }
 }

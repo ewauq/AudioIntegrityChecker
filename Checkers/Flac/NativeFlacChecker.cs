@@ -250,7 +250,17 @@ public sealed class NativeFlacChecker : IFormatChecker
                         ? TimeSpan.FromSeconds((double)state.ErrorAtSample / state.SampleRate)
                         : null;
 
-                string message = $"FLAC: {ErrorStatusName(state.ErrorStatus)}";
+                // LOST_SYNC at or after the STREAMINFO sample count means the decoder
+                // hit non-audio data (an ID3 tag or padding) appended after the last
+                // audio frame — not a mid-stream interruption.
+                bool isTrailingGarbage =
+                    state.ErrorStatus == 0 // LOST_SYNC
+                    && state.TotalSamples > 0
+                    && state.ErrorAtSample >= state.TotalSamples;
+
+                string message = isTrailingGarbage
+                    ? "FLAC: TRAILING_GARBAGE"
+                    : $"FLAC: {ErrorStatusName(state.ErrorStatus)}";
 
                 // status 0 (LOST_SYNC) and 1 (BAD_HEADER) → stream structure anomaly
                 // status 2 (FRAME_CRC_MISMATCH) and 3 (UNPARSEABLE_STREAM) → audio data corrupt
@@ -258,7 +268,7 @@ public sealed class NativeFlacChecker : IFormatChecker
                     ? CheckCategory.Structure
                     : CheckCategory.Corruption;
 
-                return state.ErrorIsWarning
+                return state.ErrorIsWarning || isTrailingGarbage
                     ? CheckResult.Warning(message, category, timecode, (long)state.ErrorAtSample)
                     : CheckResult.Error(message, category, timecode, (long)state.ErrorAtSample);
             }
