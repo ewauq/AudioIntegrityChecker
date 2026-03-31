@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AudioIntegrityChecker.Checkers.Flac;
 using AudioIntegrityChecker.Checkers.Mp3;
 using AudioIntegrityChecker.Core;
@@ -135,6 +137,7 @@ public sealed class MainForm : Form
         _listView.Columns.Add("Details", 260);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
+        _listView.KeyDown += OnListViewKeyDown;
         _listView.DrawColumnHeader += (_, e) => e.DrawDefault = true;
         _listView.DrawItem += (_, _) => { };
         _listView.DrawSubItem += OnDrawSubItem;
@@ -760,6 +763,74 @@ public sealed class MainForm : Form
     }
 
     private void SetStatus(string message) => _statusLabel.Text = message;
+
+    // -------------------------------------------------------------------------
+    // Ctrl+C — copy selected rows as JSON to clipboard
+    // -------------------------------------------------------------------------
+
+    private sealed record ClipboardEntry(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("duration")] string? Duration,
+        [property: JsonPropertyName("format")] string Format,
+        [property: JsonPropertyName("result")] string Result,
+        [property: JsonPropertyName("message")] string Message
+    );
+
+    private static readonly JsonSerializerOptions JsonExportOptions = new()
+    {
+        WriteIndented = true,
+    };
+
+    private void OnListViewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Control && e.KeyCode == Keys.C && _listView.SelectedItems.Count > 0)
+        {
+            e.Handled = true;
+            CopySelectionAsJson();
+        }
+    }
+
+    private void CopySelectionAsJson()
+    {
+        var entries = new List<ClipboardEntry>(_listView.SelectedItems.Count);
+
+        foreach (ListViewItem item in _listView.SelectedItems)
+        {
+            var path = item.ToolTipText;
+            var result = item.SubItems[ColResult].Text;
+            var category = item.SubItems[ColCategory].Text;
+            var msg = item.SubItems[ColMessage].Text;
+            var details = item.SubItems[ColDetails].Text;
+
+            string combined;
+            if (result == "OK")
+            {
+                combined = string.Empty;
+            }
+            else
+            {
+                combined = string.IsNullOrEmpty(category) ? msg : $"{category}: {msg}";
+                if (!string.IsNullOrEmpty(details))
+                    combined += $" ({details})";
+            }
+
+            var duration = item.SubItems[ColDuration].Text;
+            entries.Add(
+                new ClipboardEntry(
+                    Path: path,
+                    Name: Path.GetFileName(path),
+                    Duration: string.IsNullOrEmpty(duration) ? null : duration,
+                    Format: item.SubItems[ColFormat].Text,
+                    Result: result,
+                    Message: combined
+                )
+            );
+        }
+
+        var json = JsonSerializer.Serialize(entries, JsonExportOptions);
+        Clipboard.SetText(json);
+    }
 
     private static readonly Color RowAltColor = Color.FromArgb(245, 245, 245);
 
