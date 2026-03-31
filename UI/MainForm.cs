@@ -49,7 +49,6 @@ public sealed class MainForm : Form
     private readonly ToolStripSeparator _sepDuration;
     private readonly System.Windows.Forms.Timer _ramTimer;
 
-    // Per-category result counters — only written from the UI thread (BeginInvoke)
     private int _countOk;
     private int _countMetadata;
     private int _countIndex;
@@ -246,6 +245,13 @@ public sealed class MainForm : Form
         RegisterCheckers();
         _labelLibFlac.Text = $"libFLAC: {GetDllStatus("libFLAC.dll")}";
         _labelMpg123.Text = $"mpg123: {GetDllStatus("mpg123.dll")}";
+        // Cancel any in-flight work before the form is destroyed so that mpg123
+        // worker calls finish before Shutdown() tears down the native library.
+        FormClosing += (_, _) =>
+        {
+            _scanCts?.Cancel();
+            _analysisCts?.Cancel();
+        };
         FormClosed += (_, _) => Mp3Mpg123Backend.Shutdown();
     }
 
@@ -442,7 +448,7 @@ public sealed class MainForm : Form
             _analysisCts = null;
             SetAnalysing(false);
             ShowGlobalBar(false);
-            TrimWorkingSet();
+            _ = Task.Run(TrimWorkingSet);
         }
     }
 
