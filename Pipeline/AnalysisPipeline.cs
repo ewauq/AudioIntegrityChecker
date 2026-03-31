@@ -69,9 +69,10 @@ public sealed class AnalysisPipeline
         var checker = _registry.Resolve(filePath);
         if (checker is null)
         {
+            // Should not happen — unsupported files are filtered out before queuing.
             var extension = Path.GetExtension(filePath).TrimStart('.');
             return (
-                CheckResult.Skipped($"Unrecognized format: .{extension}"),
+                CheckResult.Error($"Unrecognized format: .{extension}", CheckCategory.Error),
                 extension.ToUpperInvariant()
             );
         }

@@ -163,10 +163,10 @@ public sealed class NativeFlacChecker : IFormatChecker
     )
     {
         if (!File.Exists(filePath))
-            return CheckResult.Error("File not found.");
+            return CheckResult.Error("File not found.", CheckCategory.Error);
 
-        if (!NativeLibraryAvailable())
-            return CheckResult.Error("libFLAC.dll not found.");
+        if (!IsLibraryAvailable())
+            return CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error);
 
         byte[] fileBuffer;
         try
@@ -175,11 +175,11 @@ public sealed class NativeFlacChecker : IFormatChecker
         }
         catch (OutOfMemoryException)
         {
-            return CheckResult.Error("File too large to load into memory.");
+            return CheckResult.Error("File too large to load into memory.", CheckCategory.Error);
         }
         catch (Exception ex)
         {
-            return CheckResult.Error($"Cannot read file: {ex.Message}");
+            return CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error);
         }
 
         // Pre-read STREAMINFO from the buffer — used for progress and timecode.
@@ -202,7 +202,7 @@ public sealed class NativeFlacChecker : IFormatChecker
         {
             decoder = FLAC__stream_decoder_new();
             if (decoder == IntPtr.Zero)
-                return CheckResult.Error("Failed to allocate FLAC decoder.");
+                return CheckResult.Error("Failed to allocate FLAC decoder.", CheckCategory.Error);
 
             // Suppress all metadata callbacks — we pre-read what we need.
             FLAC__stream_decoder_set_metadata_ignore_all(decoder);
@@ -232,13 +232,16 @@ public sealed class NativeFlacChecker : IFormatChecker
             );
 
             if (initStatus != 0)
-                return CheckResult.Error($"FLAC decoder init failed (status {initStatus}).");
+                return CheckResult.Error(
+                    $"FLAC decoder init failed (status {initStatus}).",
+                    CheckCategory.Error
+                );
 
             bool decodeSucceeded = FLAC__stream_decoder_process_until_end_of_stream(decoder);
             FLAC__stream_decoder_finish(decoder);
 
             if (state.Cancelled)
-                return CheckResult.Error("Cancelled.");
+                return CheckResult.Error("Cancelled.", CheckCategory.Error);
 
             if (state.HasError)
             {
@@ -247,15 +250,34 @@ public sealed class NativeFlacChecker : IFormatChecker
                         ? TimeSpan.FromSeconds((double)state.ErrorAtSample / state.SampleRate)
                         : null;
 
-                string message = $"FLAC: {ErrorStatusName(state.ErrorStatus)}";
+                // LOST_SYNC at or after the STREAMINFO sample count means the decoder
+                // hit non-audio data (an ID3 tag or padding) appended after the last
+                // audio frame — not a mid-stream interruption.
+                bool isTrailingGarbage =
+                    state.ErrorStatus == 0 // LOST_SYNC
+                    && state.TotalSamples > 0
+                    && state.ErrorAtSample >= state.TotalSamples;
 
-                return state.ErrorIsWarning
-                    ? CheckResult.Warning(message, timecode, (long)state.ErrorAtSample)
-                    : CheckResult.Error(message, timecode, (long)state.ErrorAtSample);
+                string message = isTrailingGarbage
+                    ? "FLAC: TRAILING_GARBAGE"
+                    : $"FLAC: {ErrorStatusName(state.ErrorStatus)}";
+
+                // status 0 (LOST_SYNC) and 1 (BAD_HEADER) → stream structure anomaly
+                // status 2 (FRAME_CRC_MISMATCH) and 3 (UNPARSEABLE_STREAM) → audio data corrupt
+                var category = IsBenignError(state.ErrorStatus)
+                    ? CheckCategory.Structure
+                    : CheckCategory.Corruption;
+
+                return state.ErrorIsWarning || isTrailingGarbage
+                    ? CheckResult.Warning(message, category, timecode, (long)state.ErrorAtSample)
+                    : CheckResult.Error(message, category, timecode, (long)state.ErrorAtSample);
             }
 
             if (!decodeSucceeded)
-                return CheckResult.Error("Decoder did not reach end of stream cleanly.");
+                return CheckResult.Error(
+                    "Decoder did not reach end of stream cleanly.",
+                    CheckCategory.Corruption
+                );
 
             return CheckResult.Ok();
         }
@@ -366,9 +388,7 @@ public sealed class NativeFlacChecker : IFormatChecker
 
     private static bool? _libraryAvailable;
 
-    internal static bool IsLibraryAvailable() => NativeLibraryAvailable();
-
-    private static bool NativeLibraryAvailable()
+    internal static bool IsLibraryAvailable()
     {
         if (_libraryAvailable.HasValue)
             return _libraryAvailable.Value;

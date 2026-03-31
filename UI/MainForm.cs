@@ -1,8 +1,11 @@
-using System.Collections;
 using System.Diagnostics;
+using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AudioIntegrityChecker.Checkers.Flac;
+using AudioIntegrityChecker.Checkers.Mp3;
 using AudioIntegrityChecker.Core;
 using AudioIntegrityChecker.Pipeline;
 
@@ -22,8 +25,6 @@ public sealed class MainForm : Form
 
     private int _totalFiles;
     private int _completedFiles;
-    private int _errorCount;
-    private int _warningCount;
     private long _totalBytes;
     private TimeSpan _totalDuration;
 
@@ -48,9 +49,24 @@ public sealed class MainForm : Form
     private readonly ToolStripSeparator _sepDuration;
     private readonly System.Windows.Forms.Timer _ramTimer;
 
-    private const int ColFormat = 2;
-    private const int ColStatus = 3;
-    private const int ColDetails = 4;
+    private int _countOk;
+    private int _countMetadata;
+    private int _countIndex;
+    private int _countStructure;
+    private int _countCorruption;
+    private int _countError;
+
+    // DLL / binary status (static, set once on startup)
+    private readonly ToolStripStatusLabel _labelLibFlac;
+    private readonly ToolStripStatusLabel _labelMpg123;
+    private readonly ToolStripSeparator _sepDlls;
+
+    private const int ColDuration = 2;
+    private const int ColFormat = 3;
+    private const int ColResult = 4;
+    private const int ColSeverity = 5;
+    private const int ColMessage = 6;
+    private const int ColError = 7;
 
     private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 20;
@@ -70,15 +86,51 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             View = View.Details,
             FullRowSelect = true,
-            GridLines = true,
+            GridLines = false,
+            OwnerDraw = true,
         };
         _listView.Columns.Add("Directory", 200);
         _listView.Columns.Add("File", 200);
-        _listView.Columns.Add("Format", 55);
-        _listView.Columns.Add("Status", 75);
-        _listView.Columns.Add("Details", 450);
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Duration",
+                Width = 65,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Format",
+                Width = 55,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Result",
+                Width = 58,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Severity",
+                Width = 75,
+                TextAlign = HorizontalAlignment.Center,
+            }
+        );
+        _listView.Columns.Add("Message", 420);
+        _listView.Columns.Add("Error", 200);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
+        _listView.KeyDown += OnListViewKeyDown;
+        _listView.DrawColumnHeader += (_, e) => e.DrawDefault = true;
+        _listView.DrawItem += (_, _) => { };
+        _listView.DrawSubItem += OnDrawSubItem;
 
         var listPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(6) };
         listPanel.Controls.Add(_listView);
@@ -103,7 +155,7 @@ public sealed class MainForm : Form
         };
         _statusLabel = new Label
         {
-            Text = "Drop audio files into the window to get started.",
+            Text = "Drop audio files into the window and click Start scan.",
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
             Width = 600,
@@ -146,10 +198,14 @@ public sealed class MainForm : Form
         _sepDuration = new ToolStripSeparator { Visible = false };
         _labelDuration = new ToolStripStatusLabel { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
-        var sepRam = new ToolStripSeparator();
         _labelRam = new ToolStripStatusLabel("RAM: —");
         var sepWorkers = new ToolStripSeparator();
         _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
+        _sepDlls = new ToolStripSeparator();
+        _labelLibFlac = new ToolStripStatusLabel();
+        var sepMpg123 = new ToolStripSeparator();
+        _labelMpg123 = new ToolStripStatusLabel();
+        var spring = new ToolStripStatusLabel { Spring = true };
 
         _statusStrip = new StatusStrip();
         _statusStrip.Items.AddRange([
@@ -158,10 +214,14 @@ public sealed class MainForm : Form
             _labelSize,
             _sepDuration,
             _labelDuration,
-            sepRam,
+            spring,
             _labelRam,
             sepWorkers,
             _labelWorkers,
+            _sepDlls,
+            _labelLibFlac,
+            sepMpg123,
+            _labelMpg123,
         ]);
 
         _ramTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -183,6 +243,19 @@ public sealed class MainForm : Form
         _cancelButton.Click += OnCancelClick;
 
         RegisterCheckers();
+
+        _labelLibFlac.Text =
+            $"libFLAC: {(NativeFlacChecker.IsLibraryAvailable() ? "available" : "not available")}";
+        _labelMpg123.Text =
+            $"mpg123: {(Mp3Mpg123Backend.IsLibraryAvailable() ? "available" : "not available")}";
+        // Cancel any in-flight work before the form is destroyed so that mpg123
+        // worker calls finish before Shutdown() tears down the native library.
+        FormClosing += (_, _) =>
+        {
+            _scanCts?.Cancel();
+            _analysisCts?.Cancel();
+        };
+        FormClosed += (_, _) => Mp3Mpg123Backend.Shutdown();
     }
 
     private void RegisterCheckers()
@@ -192,6 +265,13 @@ public sealed class MainForm : Form
             nativeFactory: () => new NativeFlacChecker(),
             processFactory: () => new ProcessFlacChecker(),
             nativeAvailable: NativeFlacChecker.IsLibraryAvailable
+        );
+
+        _registry.Register(
+            "MP3",
+            nativeFactory: () => new Mp3Checker(),
+            processFactory: () => new Mp3Checker(),
+            nativeAvailable: () => true // Mp3Checker handles mpg123 absence internally
         );
 
         _registry.Build();
@@ -245,7 +325,7 @@ public sealed class MainForm : Form
 
             entries = await Task.Run(
                 () =>
-                    CollectFiles(
+                    FileCollector.Collect(
                         droppedPaths,
                         supportedExtensions,
                         cancellationToken,
@@ -268,18 +348,22 @@ public sealed class MainForm : Form
         if (cancellationToken.IsCancellationRequested)
             return;
 
-        var accepted = entries.Where(e => !e.Skipped).ToList();
-        int skipped = entries.Count(e => e.Skipped);
-
         _listView.BeginUpdate();
-        foreach (var entry in accepted)
+        foreach (var entry in entries)
         {
             var format = _registry.Resolve(entry.FilePath)?.FormatId ?? entry.Format;
-            var item = new ListViewItem(entry.DirectoryName) { ToolTipText = entry.FilePath };
+            var item = new ListViewItem(entry.DirectoryName)
+            {
+                ToolTipText = entry.FilePath,
+                UseItemStyleForSubItems = false,
+            };
             item.SubItems.Add(Path.GetFileName(entry.FilePath));
+            item.SubItems.Add(FormatTrackDuration(entry.Duration));
             item.SubItems.Add(format);
-            item.SubItems.Add(""); // Status — empty until analysis
-            item.SubItems.Add(""); // Details
+            item.SubItems.Add(""); // Result
+            item.SubItems.Add(""); // Severity
+            item.SubItems.Add(""); // Message
+            item.SubItems.Add(""); // Error
 
             _queuedFiles.Add(entry.FilePath);
             _itemByPath[entry.FilePath] = item;
@@ -292,106 +376,11 @@ public sealed class MainForm : Form
         _listView.EndUpdate();
 
         int fileCount = _queuedFiles.Count;
-        string statusMessage = $"{fileCount} file(s) queued.";
-        if (skipped > 0)
-            statusMessage += $"  {skipped} unsupported ignored.";
-        SetStatus(statusMessage);
+        SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
         UpdateStatusBar();
         SetAnalysing(false);
     }
-
-    // Runs on a thread-pool thread — no UI access permitted.
-    private static List<FileEntry> CollectFiles(
-        string[] paths,
-        HashSet<string> supportedExtensions,
-        CancellationToken cancellationToken,
-        IProgress<int>? scanProgress = null
-    )
-    {
-        var entries = new List<FileEntry>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        int counter = 0;
-
-        void AddFile(string filePath)
-        {
-            if (!seen.Add(filePath))
-                return;
-            if (++counter % 50 == 0)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                scanProgress?.Report(entries.Count(e => !e.Skipped));
-            }
-
-            var extension = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
-            if (!supportedExtensions.Contains(extension))
-            {
-                entries.Add(
-                    new FileEntry(
-                        filePath,
-                        "",
-                        extension.ToUpperInvariant(),
-                        0,
-                        null,
-                        Skipped: true
-                    )
-                );
-                return;
-            }
-
-            long bytes = 0;
-            try
-            {
-                bytes = new FileInfo(filePath).Length;
-            }
-            catch { }
-
-            var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(filePath);
-            TimeSpan? duration =
-                (totalSamples > 0 && sampleRate > 0)
-                    ? TimeSpan.FromSeconds((double)totalSamples / sampleRate)
-                    : null;
-
-            var directoryName = Path.GetFileName(Path.GetDirectoryName(filePath)) ?? string.Empty;
-            entries.Add(
-                new FileEntry(
-                    filePath,
-                    directoryName,
-                    extension.ToUpperInvariant(),
-                    bytes,
-                    duration,
-                    Skipped: false
-                )
-            );
-        }
-
-        foreach (var path in paths)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (Directory.Exists(path))
-            {
-                foreach (
-                    var filePath in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
-                )
-                    AddFile(filePath);
-            }
-            else if (File.Exists(path))
-            {
-                AddFile(path);
-            }
-        }
-
-        return entries;
-    }
-
-    private record FileEntry(
-        string FilePath,
-        string DirectoryName,
-        string Format,
-        long Bytes,
-        TimeSpan? Duration,
-        bool Skipped
-    );
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
@@ -399,17 +388,22 @@ public sealed class MainForm : Form
             return;
 
         SetAnalysing(true);
-        _errorCount = 0;
-        _warningCount = 0;
+        _countOk = 0;
+        _countMetadata = 0;
+        _countIndex = 0;
+        _countStructure = 0;
+        _countCorruption = 0;
+        _countError = 0;
         _totalFiles = _queuedFiles.Count;
         _completedFiles = 0;
 
-        var defaultForeColor = _listView.ForeColor;
         foreach (ListViewItem item in _listView.Items)
         {
-            item.ForeColor = defaultForeColor;
-            item.SubItems[ColStatus].Text = "Waiting...";
-            item.SubItems[ColDetails].Text = "";
+            item.SubItems[ColSeverity].ForeColor = _listView.ForeColor;
+            item.SubItems[ColResult].Text = "Pending...";
+            item.SubItems[ColSeverity].Text = "";
+            item.SubItems[ColMessage].Text = "";
+            item.SubItems[ColError].Text = "";
         }
 
         _globalBar.Value = 0;
@@ -432,22 +426,12 @@ public sealed class MainForm : Form
             await _pipeline.RunAsync(_queuedFiles, _analysisCts.Token, globalProgress);
             stopwatch.Stop();
 
-            int okCount = _completedFiles - _errorCount - _warningCount;
-            var parts = new List<string>();
-            if (_errorCount > 0)
-                parts.Add($"{_errorCount} error{(_errorCount == 1 ? "" : "s")}");
-            if (_warningCount > 0)
-                parts.Add($"{_warningCount} warning{(_warningCount == 1 ? "" : "s")}");
-            if (okCount > 0)
-                parts.Add($"{okCount} OK");
             string timeText =
                 stopwatch.Elapsed.TotalSeconds < 60
                     ? $"{stopwatch.Elapsed.TotalSeconds:F1}s"
                     : $"{(int)stopwatch.Elapsed.TotalMinutes}m {stopwatch.Elapsed.Seconds:D2}s";
-            string summary = parts.Count > 0 ? $" ({string.Join(", ", parts)})" : "";
-            SetStatus(
-                $"Processed {_completedFiles} file{(_completedFiles == 1 ? "" : "s")} in {timeText}{summary}"
-            );
+            int n = _completedFiles;
+            SetStatus($"Processed {(n == 1 ? "1 file" : $"{n} files")} in {timeText}.");
 
             ShowCompletionDialog(stopwatch.Elapsed);
         }
@@ -467,7 +451,7 @@ public sealed class MainForm : Form
             _analysisCts = null;
             SetAnalysing(false);
             ShowGlobalBar(false);
-            TrimWorkingSet();
+            _ = Task.Run(TrimWorkingSet);
         }
     }
 
@@ -496,12 +480,17 @@ public sealed class MainForm : Form
         _totalDuration = TimeSpan.Zero;
         _totalFiles = 0;
         _completedFiles = 0;
-        _errorCount = 0;
-        _warningCount = 0;
+        _countOk = 0;
+        _countMetadata = 0;
+        _countIndex = 0;
+        _countStructure = 0;
+        _countCorruption = 0;
+        _countError = 0;
 
         UpdateStatusBar();
-        SetStatus("Drop audio files into the window to get started.");
+        SetStatus("Drop audio files into the window and click Start scan.");
         SetAnalysing(false);
+        TrimWorkingSet();
     }
 
     private void SetAnalysing(bool active)
@@ -514,36 +503,52 @@ public sealed class MainForm : Form
 
     private void OnFileCompleted(FileCompletedEventArgs args)
     {
-        Interlocked.Increment(ref _completedFiles);
-
-        var result = args.Result;
-        if (!result.IsValid && !result.IsSkipped)
-            Interlocked.Increment(ref _errorCount);
-        if (result.IsWarning)
-            Interlocked.Increment(ref _warningCount);
+        // Increment all counters on the worker thread so they are visible to the await
+        // continuation via the task memory barrier — no BeginInvoke delay needed.
+        int completed = Interlocked.Increment(ref _completedFiles);
+        switch (args.Result.Category)
+        {
+            case CheckCategory.Ok:
+                Interlocked.Increment(ref _countOk);
+                break;
+            case CheckCategory.Metadata:
+                Interlocked.Increment(ref _countMetadata);
+                break;
+            case CheckCategory.Index:
+                Interlocked.Increment(ref _countIndex);
+                break;
+            case CheckCategory.Structure:
+                Interlocked.Increment(ref _countStructure);
+                break;
+            case CheckCategory.Corruption:
+                Interlocked.Increment(ref _countCorruption);
+                break;
+            case CheckCategory.Error:
+                Interlocked.Increment(ref _countError);
+                break;
+        }
 
         BeginInvoke(() =>
         {
-            string status =
-                result.IsSkipped ? "SKIPPED"
-                : result.IsWarning ? "WARNING"
-                : result.IsValid ? "OK"
-                : "ERROR";
-
             if (!_itemByPath.TryGetValue(args.FilePath, out var item))
                 return;
 
-            item.SubItems[ColStatus].Text = status;
-            item.SubItems[ColDetails].Text = BuildDetailsText(result);
-            item.SubItems[ColDetails].Tag = result.ErrorMessage;
+            var result = args.Result;
+            bool isOk = result.Category == CheckCategory.Ok;
+            var severity = ResultFormatting.GetSeverity(result.Category);
+            var color = ResultFormatting.GetSeverityColor(severity);
 
-            if (status == "ERROR")
-                item.ForeColor = Color.Red;
-            if (status == "WARNING")
-                item.ForeColor = Color.DarkOrange;
+            item.SubItems[ColResult].Text = isOk ? "OK" : "ISSUE";
+            item.SubItems[ColSeverity].Text =
+                severity == ResultSeverity.None ? "" : severity.ToString();
+            item.SubItems[ColSeverity].ForeColor = color;
+            item.SubItems[ColMessage].Text = ResultFormatting.BuildMessageColumnText(result);
+            item.SubItems[ColError].Text = result.ErrorMessage ?? string.Empty;
 
-            int completed = _completedFiles;
-            SetStatus($"Processing: {completed}/{_totalFiles}");
+            // Stop updating the status label once all files are accounted for —
+            // the await continuation will overwrite it with the final summary.
+            if (completed < _totalFiles)
+                SetStatus($"Processing: {completed}/{_totalFiles}");
         });
     }
 
@@ -553,10 +558,10 @@ public sealed class MainForm : Form
         {
             if (!_itemByPath.TryGetValue(args.FilePath, out var item))
                 return;
-            var current = item.SubItems[ColStatus].Text;
-            if (current is "OK" or "ERROR" or "WARNING" or "SKIPPED")
+            var current = item.SubItems[ColResult].Text;
+            if (current is "OK" or "ISSUE")
                 return;
-            item.SubItems[ColStatus].Text = $"{(int)(args.Progress.Value * 100)}%";
+            item.SubItems[ColResult].Text = $"{(int)(args.Progress.Value * 100)}%";
         });
     }
 
@@ -593,25 +598,38 @@ public sealed class MainForm : Form
         );
         builder.AppendLine();
 
-        if (_errorCount == 0 && _warningCount == 0)
+        bool hasSevere = _countCorruption > 0 || _countError > 0;
+        bool hasMinor = _countStructure > 0 || _countIndex > 0 || _countMetadata > 0;
+
+        if (!hasSevere && !hasMinor)
         {
-            builder.Append("No errors found.");
+            builder.Append("All files OK.");
         }
         else
         {
-            if (_errorCount > 0)
+            if (_countCorruption > 0)
                 builder.AppendLine(
-                    $"{_errorCount} error{(_errorCount == 1 ? "" : "s")} found: audio data corrupt."
+                    $"{_countCorruption} CORRUPTION — audio data demonstrably damaged."
                 );
-            if (_warningCount > 0)
+            if (_countError > 0)
+                builder.AppendLine(
+                    $"{_countError} ERROR — analysis tool failed, file state unknown."
+                );
+            if (_countStructure > 0)
+                builder.AppendLine(
+                    $"{_countStructure} STRUCTURE — stream anomaly, audio likely intact."
+                );
+            if (_countIndex > 0)
+                builder.AppendLine($"{_countIndex} INDEX — seek/frame count mismatch.");
+            if (_countMetadata > 0)
                 builder.Append(
-                    $"{_warningCount} warning{(_warningCount == 1 ? "" : "s")}: audio likely intact, minor structural issues."
+                    $"{_countMetadata} METADATA — tag inconsistency, no playback impact."
                 );
         }
 
         var icon =
-            _errorCount > 0 ? MessageBoxIcon.Error
-            : _warningCount > 0 ? MessageBoxIcon.Warning
+            hasSevere ? MessageBoxIcon.Error
+            : hasMinor ? MessageBoxIcon.Warning
             : MessageBoxIcon.Information;
 
         MessageBox.Show(
@@ -620,27 +638,6 @@ public sealed class MainForm : Form
             MessageBoxButtons.OK,
             icon
         );
-    }
-
-    private static string BuildDetailsText(CheckResult result)
-    {
-        if (result.IsSkipped)
-            return result.ErrorMessage ?? string.Empty;
-        if (result.IsValid && !result.IsWarning)
-            return string.Empty;
-
-        var builder = new System.Text.StringBuilder();
-        if (result.ErrorTimecode.HasValue)
-            builder.Append($"@ {result.ErrorTimecode.Value:hh\\:mm\\:ss\\.fff}  ");
-        if (result.ErrorFrameIndex.HasValue)
-            builder.Append($"[frame {result.ErrorFrameIndex.Value}]  ");
-        if (!string.IsNullOrEmpty(result.ErrorMessage))
-        {
-            if (builder.Length > 0)
-                builder.Append("— ");
-            builder.Append(result.ErrorMessage);
-        }
-        return builder.ToString().TrimEnd();
     }
 
     private void OnColumnClick(object? sender, ColumnClickEventArgs e)
@@ -655,36 +652,6 @@ public sealed class MainForm : Form
 
         _listView.ListViewItemSorter = new ColumnSorter(_sortColumn, _sortAscending);
         _listView.Sort();
-    }
-
-    private sealed class ColumnSorter : IComparer
-    {
-        private readonly int _column;
-        private readonly bool _ascending;
-
-        public ColumnSorter(int column, bool ascending)
-        {
-            _column = column;
-            _ascending = ascending;
-        }
-
-        public int Compare(object? x, object? y)
-        {
-            if (x is not ListViewItem itemA || y is not ListViewItem itemB)
-                return 0;
-
-            string textA =
-                _column < itemA.SubItems.Count
-                    ? (_column == 0 ? itemA.Text : itemA.SubItems[_column].Text)
-                    : string.Empty;
-            string textB =
-                _column < itemB.SubItems.Count
-                    ? (_column == 0 ? itemB.Text : itemB.SubItems[_column].Text)
-                    : string.Empty;
-
-            int comparison = string.Compare(textA, textB, StringComparison.OrdinalIgnoreCase);
-            return _ascending ? comparison : -comparison;
-        }
     }
 
     private void ShowGlobalBar(bool visible)
@@ -727,14 +694,29 @@ public sealed class MainForm : Form
 
     private static void TrimWorkingSet()
     {
-        // Passing -1/-1 instructs Windows to trim the process working set.
-        // This is a cosmetic operation (pages become eligible for paging out)
-        // and does not force any managed heap collection.
+        // Force a full Gen2 GC with LOH compaction to reclaim the large byte[] buffers
+        // (File.ReadAllBytes per file) that accumulated on the Large Object Heap during analysis.
+        // Without this, those buffers are eligible but won't be collected until the runtime
+        // decides to run a Gen2 sweep on its own, which may not happen for a long time.
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+
+        // Then tell Windows the now-empty pages can be paged out.
         SetProcessWorkingSetSize(
             Process.GetCurrentProcess().Handle,
             new IntPtr(-1),
             new IntPtr(-1)
         );
+    }
+
+    private static string FormatTrackDuration(TimeSpan? duration)
+    {
+        if (duration is null)
+            return "";
+        var d = duration.Value;
+        return d.TotalHours >= 1
+            ? $"{(int)d.TotalHours}:{d.Minutes:D2}:{d.Seconds:D2}"
+            : $"{(int)d.TotalMinutes}:{d.Seconds:D2}";
     }
 
     private static string FormatDuration(TimeSpan duration)
@@ -760,11 +742,108 @@ public sealed class MainForm : Form
     private void SetStatus(string message) => _statusLabel.Text = message;
 
     // -------------------------------------------------------------------------
-    // Double-buffered ListView (eliminates column-resize flicker)
+    // Ctrl+C — copy selected rows as JSON to clipboard
     // -------------------------------------------------------------------------
 
-    private sealed class BufferedListView : ListView
+    private sealed record ClipboardEntry(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("duration")] string? Duration,
+        [property: JsonPropertyName("format")] string Format,
+        [property: JsonPropertyName("result")] string Result,
+        [property: JsonPropertyName("message")] string Message,
+        [property: JsonPropertyName("error")] string? Error
+    );
+
+    private static readonly JsonSerializerOptions JsonExportOptions = new()
     {
-        public BufferedListView() => DoubleBuffered = true;
+        WriteIndented = true,
+    };
+
+    private void OnListViewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Control && e.KeyCode == Keys.C && _listView.SelectedItems.Count > 0)
+        {
+            e.Handled = true;
+            CopySelectionAsJson();
+        }
+    }
+
+    private void CopySelectionAsJson()
+    {
+        var entries = new List<ClipboardEntry>(_listView.SelectedItems.Count);
+
+        foreach (ListViewItem item in _listView.SelectedItems)
+        {
+            var path = item.ToolTipText;
+            var result = item.SubItems[ColResult].Text;
+            var duration = item.SubItems[ColDuration].Text;
+            entries.Add(
+                new ClipboardEntry(
+                    Path: path,
+                    Name: Path.GetFileName(path),
+                    Duration: string.IsNullOrEmpty(duration) ? null : duration,
+                    Format: item.SubItems[ColFormat].Text,
+                    Result: result,
+                    Message: item.SubItems[ColMessage].Text,
+                    Error: item.SubItems[ColError].Text is { Length: > 0 } e ? e : null
+                )
+            );
+        }
+
+        var json = JsonSerializer.Serialize(entries, JsonExportOptions);
+        Clipboard.SetText(json);
+    }
+
+    private static readonly Color RowAltColor = Color.FromArgb(245, 245, 245);
+
+    private void OnDrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
+    {
+        if (e.Item is null)
+            return;
+
+        // Row background: selection takes priority, then alternating color
+        Color back = e.Item.Selected
+            ? (_listView.Focused ? SystemColors.Highlight : SystemColors.ButtonFace)
+            : (e.ItemIndex % 2 == 0 ? Color.White : RowAltColor);
+
+        using (var brush = new SolidBrush(back))
+            e.Graphics.FillRectangle(brush, e.Bounds);
+
+        // Text color: respect per-subitem ForeColor (set for the Severity column)
+        var subFore = e.SubItem?.ForeColor ?? Color.Empty;
+        Color fore =
+            e.Item.Selected && _listView.Focused
+                ? SystemColors.HighlightText
+                : (subFore.IsEmpty ? SystemColors.WindowText : subFore);
+
+        // Text alignment from column definition
+        var align = _listView.Columns[e.ColumnIndex].TextAlign;
+        var flags =
+            TextFormatFlags.VerticalCenter
+            | TextFormatFlags.EndEllipsis
+            | (
+                align == HorizontalAlignment.Center ? TextFormatFlags.HorizontalCenter
+                : align == HorizontalAlignment.Right ? TextFormatFlags.Right
+                : TextFormatFlags.Left
+            );
+
+        var textBounds = new Rectangle(
+            e.Bounds.X + 3,
+            e.Bounds.Y,
+            e.Bounds.Width - 6,
+            e.Bounds.Height
+        );
+        TextRenderer.DrawText(e.Graphics, e.SubItem?.Text, e.Item.Font, textBounds, fore, flags);
+
+        // Vertical separator (right border only)
+        using var pen = new Pen(SystemColors.ControlLight);
+        e.Graphics.DrawLine(
+            pen,
+            e.Bounds.Right - 1,
+            e.Bounds.Top,
+            e.Bounds.Right - 1,
+            e.Bounds.Bottom - 1
+        );
     }
 }
