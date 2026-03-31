@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace AudioIntegrityChecker.Checkers.Mp3;
 
 /// <summary>
