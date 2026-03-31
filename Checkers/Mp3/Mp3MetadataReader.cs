@@ -62,17 +62,38 @@ internal static class Mp3MetadataReader
     {
         try
         {
-            long fileSize;
-            byte[] buf;
-            using (var stream = File.OpenRead(filePath))
+            using var stream = File.OpenRead(filePath);
+            long fileSize = stream.Length;
+            if (fileSize < 4) return null;
+
+            // Peek at the 10-byte ID3v2 header to get the exact tag size,
+            // then seek past it so the frame buffer starts at the first audio frame.
+            // This handles arbitrarily large ID3v2 tags (e.g. files with embedded artwork).
+            int id3Size = 0;
+            if (fileSize >= 10)
             {
-                fileSize = stream.Length;
-                int toRead = (int)Math.Min(fileSize, HeaderReadSize);
-                buf = new byte[toRead];
-                stream.ReadExactly(buf, 0, toRead);
+                var id3Header = new byte[10];
+                stream.ReadExactly(id3Header, 0, 10);
+                if (id3Header[0] == (byte)'I' && id3Header[1] == (byte)'D' && id3Header[2] == (byte)'3'
+                    && id3Header[3] != 0xFF && id3Header[4] != 0xFF)
+                {
+                    int tagSize = (id3Header[6] << 21) | (id3Header[7] << 14)
+                                | (id3Header[8] << 7)  | id3Header[9];
+                    bool hasFooter = (id3Header[5] & 0x10) != 0;
+                    id3Size = 10 + tagSize + (hasFooter ? 10 : 0);
+                }
             }
 
-            return ParseDuration(buf, fileSize);
+            long frameAreaStart = Math.Min(id3Size, fileSize);
+            long remaining = fileSize - frameAreaStart;
+            if (remaining < 4) return null;
+
+            stream.Seek(frameAreaStart, SeekOrigin.Begin);
+            int toRead = (int)Math.Min(remaining, HeaderReadSize);
+            var buf = new byte[toRead];
+            stream.ReadExactly(buf, 0, toRead);
+
+            return ParseDuration(buf, fileSize, id3Size);
         }
         catch
         {
@@ -80,13 +101,12 @@ internal static class Mp3MetadataReader
         }
     }
 
-    private static TimeSpan? ParseDuration(byte[] buf, long fileSize)
+    private static TimeSpan? ParseDuration(byte[] buf, long fileSize, int id3Size)
     {
         if (buf.Length < 4)
             return null;
 
-        int id3Size = SkipId3v2(buf);
-        int pos = id3Size;
+        int pos = 0; // buf already starts at the first audio frame
 
         while (pos <= buf.Length - 4)
         {
@@ -175,22 +195,6 @@ internal static class Mp3MetadataReader
             (false, false) => 21, // MPEG2/2.5 stereo
             (false, true) => 13, //  MPEG2/2.5 mono: 4-byte header + 9-byte side info
         };
-
-    private static int SkipId3v2(byte[] buf)
-    {
-        const int HeaderSize = 10;
-        if (buf.Length < HeaderSize)
-            return 0;
-        if (buf[0] != (byte)'I' || buf[1] != (byte)'D' || buf[2] != (byte)'3')
-            return 0;
-        if (buf[3] == 0xFF || buf[4] == 0xFF)
-            return 0;
-
-        // Syncsafe integer: 4 bytes × 7 bits each
-        int tagSize = (buf[6] << 21) | (buf[7] << 14) | (buf[8] << 7) | buf[9];
-        bool hasFooter = (buf[5] & 0x10) != 0;
-        return Math.Min(HeaderSize + tagSize + (hasFooter ? HeaderSize : 0), buf.Length);
-    }
 
     private static uint ReadBigEndianUInt32(byte[] buf, int offset) =>
         ((uint)buf[offset] << 24)
