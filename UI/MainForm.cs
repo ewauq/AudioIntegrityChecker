@@ -390,7 +390,6 @@ public sealed class MainForm : Form
 
         foreach (ListViewItem item in _listView.Items)
         {
-            item.SubItems[ColResult].ForeColor = _listView.ForeColor;
             item.SubItems[ColSeverity].ForeColor = _listView.ForeColor;
             item.SubItems[ColResult].Text = "Waiting...";
             item.SubItems[ColSeverity].Text = "";
@@ -531,7 +530,6 @@ public sealed class MainForm : Form
             var color = ResultFormatting.GetSeverityColor(severity);
 
             item.SubItems[ColResult].Text = isOk ? "OK" : "ISSUE";
-            item.SubItems[ColResult].ForeColor = isOk ? Color.DarkGreen : color;
             item.SubItems[ColSeverity].Text =
                 severity == ResultSeverity.None ? "" : severity.ToString();
             item.SubItems[ColSeverity].ForeColor = color;
