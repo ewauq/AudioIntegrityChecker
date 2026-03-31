@@ -1,4 +1,5 @@
 using AudioIntegrityChecker.Checkers.Flac;
+using AudioIntegrityChecker.Checkers.Mp3;
 
 namespace AudioIntegrityChecker.Pipeline;
 
@@ -42,11 +43,16 @@ internal static class FileCollector
             }
             catch { }
 
-            var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(filePath);
-            TimeSpan? duration =
-                totalSamples > 0 && sampleRate > 0
-                    ? TimeSpan.FromSeconds((double)totalSamples / sampleRate)
-                    : null;
+            TimeSpan? duration = extension switch
+            {
+                "flac" => FlacMetadataReader.TryReadStreamInfo(filePath) is var (ts, sr)
+                && ts > 0
+                && sr > 0
+                    ? TimeSpan.FromSeconds((double)ts / sr)
+                    : null,
+                "mp3" => Mp3MetadataReader.TryReadDuration(filePath),
+                _ => null,
+            };
 
             var directoryName = Path.GetFileName(Path.GetDirectoryName(filePath)) ?? string.Empty;
             entries.Add(

@@ -60,11 +60,12 @@ public sealed class MainForm : Form
     private readonly ToolStripStatusLabel _labelMpg123;
     private readonly ToolStripSeparator _sepDlls;
 
-    private const int ColFormat = 2;
-    private const int ColResult = 3;
-    private const int ColSeverity = 4;
-    private const int ColCategory = 5;
-    private const int ColDetails = 6;
+    private const int ColDuration = 2;
+    private const int ColFormat = 3;
+    private const int ColResult = 4;
+    private const int ColSeverity = 5;
+    private const int ColCategory = 6;
+    private const int ColDetails = 7;
 
     private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 20;
@@ -88,6 +89,14 @@ public sealed class MainForm : Form
         };
         _listView.Columns.Add("Directory", 200);
         _listView.Columns.Add("File", 200);
+        _listView.Columns.Add(
+            new ColumnHeader
+            {
+                Text = "Duration",
+                Width = 65,
+                TextAlign = HorizontalAlignment.Right,
+            }
+        );
         _listView.Columns.Add(
             new ColumnHeader
             {
@@ -340,6 +349,7 @@ public sealed class MainForm : Form
                 UseItemStyleForSubItems = false,
             };
             item.SubItems.Add(Path.GetFileName(entry.FilePath));
+            item.SubItems.Add(FormatTrackDuration(entry.Duration));
             item.SubItems.Add(format);
             item.SubItems.Add(""); // Result
             item.SubItems.Add(""); // Severity
@@ -693,6 +703,16 @@ public sealed class MainForm : Form
             new IntPtr(-1),
             new IntPtr(-1)
         );
+    }
+
+    private static string FormatTrackDuration(TimeSpan? duration)
+    {
+        if (duration is null)
+            return "";
+        var d = duration.Value;
+        return d.TotalHours >= 1
+            ? $"{(int)d.TotalHours}:{d.Minutes:D2}:{d.Seconds:D2}"
+            : $"{(int)d.TotalMinutes}:{d.Seconds:D2}";
     }
 
     private static string FormatDuration(TimeSpan duration)
