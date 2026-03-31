@@ -739,23 +739,6 @@ public sealed class MainForm : Form
         return $"{bytes} B";
     }
 
-    private static string GetDllStatus(string dllName)
-    {
-        if (File.Exists(Path.Combine(AppContext.BaseDirectory, dllName)))
-            return "found";
-
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        foreach (
-            var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-        )
-        {
-            if (File.Exists(Path.Combine(dir.Trim(), dllName)))
-                return "found";
-        }
-
-        return "not found";
-    }
-
     private void SetStatus(string message) => _statusLabel.Text = message;
 
     // -------------------------------------------------------------------------
