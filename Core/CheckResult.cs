@@ -14,7 +14,7 @@ public record CheckResult(
         CheckCategory category,
         TimeSpan? timecode = null,
         long? frameIndex = null
-    ) => new(true, message, timecode, frameIndex) { IsWarning = true, Category = category };
+    ) => new(true, message, timecode, frameIndex) { Category = category };
 
     public static CheckResult Error(
         string message,
@@ -23,6 +23,5 @@ public record CheckResult(
         long? frameIndex = null
     ) => new(false, message, timecode, frameIndex) { Category = category };
 
-    public bool IsWarning { get; private init; }
     public CheckCategory Category { get; init; } = CheckCategory.Ok;
 }

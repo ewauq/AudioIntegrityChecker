@@ -165,7 +165,7 @@ public sealed class NativeFlacChecker : IFormatChecker
         if (!File.Exists(filePath))
             return CheckResult.Error("File not found.", CheckCategory.Error);
 
-        if (!NativeLibraryAvailable())
+        if (!IsLibraryAvailable())
             return CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error);
 
         byte[] fileBuffer;
@@ -378,9 +378,7 @@ public sealed class NativeFlacChecker : IFormatChecker
 
     private static bool? _libraryAvailable;
 
-    internal static bool IsLibraryAvailable() => NativeLibraryAvailable();
-
-    private static bool NativeLibraryAvailable()
+    internal static bool IsLibraryAvailable()
     {
         if (_libraryAvailable.HasValue)
             return _libraryAvailable.Value;

@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Diagnostics;
 using System.Runtime;
 using System.Runtime.InteropServices;
@@ -308,7 +307,7 @@ public sealed class MainForm : Form
 
             entries = await Task.Run(
                 () =>
-                    CollectFiles(
+                    FileCollector.Collect(
                         droppedPaths,
                         supportedExtensions,
                         cancellationToken,
@@ -363,84 +362,6 @@ public sealed class MainForm : Form
         UpdateStatusBar();
         SetAnalysing(false);
     }
-
-    // Runs on a thread-pool thread — no UI access permitted.
-    private static List<FileEntry> CollectFiles(
-        string[] paths,
-        HashSet<string> supportedExtensions,
-        CancellationToken cancellationToken,
-        IProgress<int>? scanProgress = null
-    )
-    {
-        var entries = new List<FileEntry>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        int counter = 0;
-
-        void AddFile(string filePath)
-        {
-            if (!seen.Add(filePath))
-                return;
-            if (++counter % 50 == 0)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                scanProgress?.Report(entries.Count);
-            }
-
-            var extension = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
-            if (!supportedExtensions.Contains(extension))
-                return;
-
-            long bytes = 0;
-            try
-            {
-                bytes = new FileInfo(filePath).Length;
-            }
-            catch { }
-
-            var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(filePath);
-            TimeSpan? duration =
-                (totalSamples > 0 && sampleRate > 0)
-                    ? TimeSpan.FromSeconds((double)totalSamples / sampleRate)
-                    : null;
-
-            var directoryName = Path.GetFileName(Path.GetDirectoryName(filePath)) ?? string.Empty;
-            entries.Add(
-                new FileEntry(
-                    filePath,
-                    directoryName,
-                    extension.ToUpperInvariant(),
-                    bytes,
-                    duration
-                )
-            );
-        }
-
-        foreach (var path in paths)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (Directory.Exists(path))
-            {
-                foreach (
-                    var filePath in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
-                )
-                    AddFile(filePath);
-            }
-            else if (File.Exists(path))
-            {
-                AddFile(path);
-            }
-        }
-
-        return entries;
-    }
-
-    private record FileEntry(
-        string FilePath,
-        string DirectoryName,
-        string Format,
-        long Bytes,
-        TimeSpan? Duration
-    );
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
@@ -596,16 +517,18 @@ public sealed class MainForm : Form
 
             var result = args.Result;
             bool isOk = result.Category == CheckCategory.Ok;
-            var severity = GetSeverity(result.Category);
-            var color = GetSeverityColor(severity);
+            var severity = ResultFormatting.GetSeverity(result.Category);
+            var color = ResultFormatting.GetSeverityColor(severity);
 
             item.SubItems[ColResult].Text = isOk ? "OK" : "ISSUE";
             item.SubItems[ColResult].ForeColor = isOk ? Color.DarkGreen : color;
             item.SubItems[ColSeverity].Text =
                 severity == ResultSeverity.None ? "" : severity.ToString();
             item.SubItems[ColSeverity].ForeColor = color;
-            item.SubItems[ColCategory].Text = GetCategoryDisplayName(result.Category);
-            item.SubItems[ColDetails].Text = BuildDetailsText(result);
+            item.SubItems[ColCategory].Text = ResultFormatting.GetCategoryDisplayName(
+                result.Category
+            );
+            item.SubItems[ColDetails].Text = ResultFormatting.BuildDetailsText(result);
             item.SubItems[ColDetails].Tag = result.ErrorMessage;
 
             // Stop updating the status label once all files are accounted for —
@@ -703,25 +626,6 @@ public sealed class MainForm : Form
         );
     }
 
-    private static string BuildDetailsText(CheckResult result)
-    {
-        if (result.IsValid && !result.IsWarning)
-            return string.Empty;
-
-        var builder = new System.Text.StringBuilder();
-        if (result.ErrorTimecode.HasValue)
-            builder.Append($"@ {result.ErrorTimecode.Value:hh\\:mm\\:ss\\.fff}  ");
-        if (result.ErrorFrameIndex.HasValue)
-            builder.Append($"[frame {result.ErrorFrameIndex.Value}]  ");
-        if (!string.IsNullOrEmpty(result.ErrorMessage))
-        {
-            if (builder.Length > 0)
-                builder.Append("— ");
-            builder.Append(result.ErrorMessage);
-        }
-        return builder.ToString().TrimEnd();
-    }
-
     private void OnColumnClick(object? sender, ColumnClickEventArgs e)
     {
         if (e.Column == _sortColumn)
@@ -734,36 +638,6 @@ public sealed class MainForm : Form
 
         _listView.ListViewItemSorter = new ColumnSorter(_sortColumn, _sortAscending);
         _listView.Sort();
-    }
-
-    private sealed class ColumnSorter : IComparer
-    {
-        private readonly int _column;
-        private readonly bool _ascending;
-
-        public ColumnSorter(int column, bool ascending)
-        {
-            _column = column;
-            _ascending = ascending;
-        }
-
-        public int Compare(object? x, object? y)
-        {
-            if (x is not ListViewItem itemA || y is not ListViewItem itemB)
-                return 0;
-
-            string textA =
-                _column < itemA.SubItems.Count
-                    ? (_column == 0 ? itemA.Text : itemA.SubItems[_column].Text)
-                    : string.Empty;
-            string textB =
-                _column < itemB.SubItems.Count
-                    ? (_column == 0 ? itemB.Text : itemB.SubItems[_column].Text)
-                    : string.Empty;
-
-            int comparison = string.Compare(textA, textB, StringComparison.OrdinalIgnoreCase);
-            return _ascending ? comparison : -comparison;
-        }
     }
 
     private void ShowGlobalBar(bool visible)
@@ -841,46 +715,6 @@ public sealed class MainForm : Form
         return $"{bytes} B";
     }
 
-    private enum ResultSeverity
-    {
-        None,
-        Low,
-        Medium,
-        High,
-        Critical,
-    }
-
-    private static ResultSeverity GetSeverity(CheckCategory category) =>
-        category switch
-        {
-            CheckCategory.Metadata => ResultSeverity.Low,
-            CheckCategory.Index => ResultSeverity.Low,
-            CheckCategory.Structure => ResultSeverity.Medium,
-            CheckCategory.Error => ResultSeverity.High,
-            CheckCategory.Corruption => ResultSeverity.Critical,
-            _ => ResultSeverity.None,
-        };
-
-    private static Color GetSeverityColor(ResultSeverity severity) =>
-        severity switch
-        {
-            ResultSeverity.Medium => Color.Goldenrod,
-            ResultSeverity.High => Color.OrangeRed,
-            ResultSeverity.Critical => Color.Crimson,
-            _ => SystemColors.WindowText,
-        };
-
-    private static string GetCategoryDisplayName(CheckCategory category) =>
-        category switch
-        {
-            CheckCategory.Metadata => "Metadata",
-            CheckCategory.Index => "Index",
-            CheckCategory.Structure => "Structural",
-            CheckCategory.Corruption => "Corruption",
-            CheckCategory.Error => "Error",
-            _ => "",
-        };
-
     private static string GetDllStatus(string dllName)
     {
         if (File.Exists(Path.Combine(AppContext.BaseDirectory, dllName)))
@@ -899,13 +733,4 @@ public sealed class MainForm : Form
     }
 
     private void SetStatus(string message) => _statusLabel.Text = message;
-
-    // -------------------------------------------------------------------------
-    // Double-buffered ListView (eliminates column-resize flicker)
-    // -------------------------------------------------------------------------
-
-    private sealed class BufferedListView : ListView
-    {
-        public BufferedListView() => DoubleBuffered = true;
-    }
 }

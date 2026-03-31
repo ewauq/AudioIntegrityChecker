@@ -9,8 +9,8 @@ internal enum Mp3Diagnostic
     JUNK_DATA,
     BAD_HEADER,
     FRAME_CRC_MISMATCH,
-    XING_FRAME_COUNT_MISMATCH, // VBR: le header Xing indique un mauvais nombre de frames
-    INFO_FRAME_COUNT_MISMATCH, // CBR: le header Info indique un mauvais nombre de frames
+    XING_FRAME_COUNT_MISMATCH, // VBR: Xing header reports an incorrect frame count
+    INFO_FRAME_COUNT_MISMATCH, // CBR: Info header reports an incorrect frame count
     LAME_TAG_CRC_MISMATCH,
     TRUNCATED_STREAM,
     LOST_SYNC,

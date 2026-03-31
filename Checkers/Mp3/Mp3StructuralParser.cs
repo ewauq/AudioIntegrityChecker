@@ -178,8 +178,8 @@ internal static class Mp3StructuralParser
                 if (pos + FrameHeaderSize + FrameCrcSize + sideInfoLen <= buf.Length)
                 {
                     // CRC covers header bytes 2–3 (h2 and h3), then the side information block
-                    ushort crcComputed = Crc16(buf, pos + 2, 2);
-                    crcComputed = Crc16Continue(
+                    ushort crcComputed = Crc16(0xFFFF, buf, pos + 2, 2);
+                    crcComputed = Crc16(
                         crcComputed,
                         buf,
                         pos + FrameHeaderSize + FrameCrcSize,
@@ -406,28 +406,10 @@ internal static class Mp3StructuralParser
     // -------------------------------------------------------------------------
     // CRC-16/ARC: poly=0x8005, init=0xFFFF, input reflected, output reflected.
     // Used for MP3 frame header protection (ISO 11172-3).
+    // Pass init=0xFFFF to start a new CRC, or a prior return value to continue.
     // -------------------------------------------------------------------------
 
-    private static ushort Crc16(byte[] buf, int offset, int length)
-    {
-        ushort crc = 0xFFFF;
-        for (int i = 0; i < length; i++)
-        {
-            byte b = buf[offset + i];
-            for (int bit = 0; bit < 8; bit++)
-            {
-                bool databit = (b & 1) != 0;
-                bool crcBit = (crc & 1) != 0;
-                crc >>= 1;
-                if (databit ^ crcBit)
-                    crc ^= 0xA001; // reflected 0x8005
-                b >>= 1;
-            }
-        }
-        return crc;
-    }
-
-    private static ushort Crc16Continue(ushort crc, byte[] buf, int offset, int length)
+    private static ushort Crc16(ushort crc, byte[] buf, int offset, int length)
     {
         for (int i = 0; i < length; i++)
         {
