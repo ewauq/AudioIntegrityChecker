@@ -64,7 +64,8 @@ internal static class Mp3MetadataReader
         {
             using var stream = File.OpenRead(filePath);
             long fileSize = stream.Length;
-            if (fileSize < 4) return null;
+            if (fileSize < 4)
+                return null;
 
             // Peek at the 10-byte ID3v2 header to get the exact tag size,
             // then seek past it so the frame buffer starts at the first audio frame.
@@ -74,11 +75,19 @@ internal static class Mp3MetadataReader
             {
                 var id3Header = new byte[10];
                 stream.ReadExactly(id3Header, 0, 10);
-                if (id3Header[0] == (byte)'I' && id3Header[1] == (byte)'D' && id3Header[2] == (byte)'3'
-                    && id3Header[3] != 0xFF && id3Header[4] != 0xFF)
+                if (
+                    id3Header[0] == (byte)'I'
+                    && id3Header[1] == (byte)'D'
+                    && id3Header[2] == (byte)'3'
+                    && id3Header[3] != 0xFF
+                    && id3Header[4] != 0xFF
+                )
                 {
-                    int tagSize = (id3Header[6] << 21) | (id3Header[7] << 14)
-                                | (id3Header[8] << 7)  | id3Header[9];
+                    int tagSize =
+                        (id3Header[6] << 21)
+                        | (id3Header[7] << 14)
+                        | (id3Header[8] << 7)
+                        | id3Header[9];
                     bool hasFooter = (id3Header[5] & 0x10) != 0;
                     id3Size = 10 + tagSize + (hasFooter ? 10 : 0);
                 }
@@ -86,7 +95,8 @@ internal static class Mp3MetadataReader
 
             long frameAreaStart = Math.Min(id3Size, fileSize);
             long remaining = fileSize - frameAreaStart;
-            if (remaining < 4) return null;
+            if (remaining < 4)
+                return null;
 
             stream.Seek(frameAreaStart, SeekOrigin.Begin);
             int toRead = (int)Math.Min(remaining, HeaderReadSize);
