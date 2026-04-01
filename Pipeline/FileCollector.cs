@@ -17,6 +17,8 @@ internal static class FileCollector
         IProgress<int>? scanProgress = null
     )
     {
+        const int ScanProgressInterval = 50; // check cancellation and report progress every N files scanned
+
         var entries = new List<FileEntry>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int counter = 0;
@@ -26,7 +28,7 @@ internal static class FileCollector
             if (!seen.Add(filePath))
                 return;
 
-            if (++counter % 50 == 0)
+            if (++counter % ScanProgressInterval == 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 scanProgress?.Report(entries.Count);

@@ -10,71 +10,23 @@ internal static class Mp3MetadataReader
 {
     private const int HeaderReadSize = 10_240; // 10 KB — covers ID3v2 + first frame + Xing tag
 
-    private static readonly int[] Mpeg1L3Bitrate =
-    [
-        0,
-        32,
-        40,
-        48,
-        56,
-        64,
-        80,
-        96,
-        112,
-        128,
-        160,
-        192,
-        224,
-        256,
-        320,
-        0,
-    ];
-
-    private static readonly int[] Mpeg2L3Bitrate =
-    [
-        0,
-        8,
-        16,
-        24,
-        32,
-        40,
-        48,
-        56,
-        64,
-        80,
-        96,
-        112,
-        128,
-        144,
-        160,
-        0,
-    ];
-
-    private static readonly int[][] SampleRates =
-    [
-        [11025, 12000, 8000, 0], // 0 = MPEG 2.5
-        [0, 0, 0, 0], //           1 = reserved
-        [22050, 24000, 16000, 0], // 2 = MPEG 2
-        [44100, 48000, 32000, 0], // 3 = MPEG 1
-    ];
-
     internal static TimeSpan? TryReadDuration(string filePath)
     {
         try
         {
             using var stream = File.OpenRead(filePath);
             long fileSize = stream.Length;
-            if (fileSize < 4)
+            if (fileSize < Mp3Format.FrameHeaderSize)
                 return null;
 
             // Peek at the 10-byte ID3v2 header to get the exact tag size,
             // then seek past it so the frame buffer starts at the first audio frame.
             // This handles arbitrarily large ID3v2 tags (e.g. files with embedded artwork).
             int id3Size = 0;
-            if (fileSize >= 10)
+            if (fileSize >= Mp3Format.Id3v2HeaderSize)
             {
-                var id3Header = new byte[10];
-                stream.ReadExactly(id3Header, 0, 10);
+                var id3Header = new byte[Mp3Format.Id3v2HeaderSize];
+                stream.ReadExactly(id3Header, 0, Mp3Format.Id3v2HeaderSize);
                 if (
                     id3Header[0] == (byte)'I'
                     && id3Header[1] == (byte)'D'
@@ -83,19 +35,23 @@ internal static class Mp3MetadataReader
                     && id3Header[4] != 0xFF
                 )
                 {
+                    // Syncsafe integer: 4 bytes × 7 bits each → 28-bit tag size
                     int tagSize =
                         (id3Header[6] << 21)
                         | (id3Header[7] << 14)
                         | (id3Header[8] << 7)
                         | id3Header[9];
-                    bool hasFooter = (id3Header[5] & 0x10) != 0;
-                    id3Size = 10 + tagSize + (hasFooter ? 10 : 0);
+                    bool hasFooter = (id3Header[5] & Mp3Format.Id3v2FooterFlag) != 0;
+                    id3Size =
+                        Mp3Format.Id3v2HeaderSize
+                        + tagSize
+                        + (hasFooter ? Mp3Format.Id3v2HeaderSize : 0);
                 }
             }
 
             long frameAreaStart = Math.Min(id3Size, fileSize);
             long remaining = fileSize - frameAreaStart;
-            if (remaining < 4)
+            if (remaining < Mp3Format.FrameHeaderSize)
                 return null;
 
             stream.Seek(frameAreaStart, SeekOrigin.Begin);
@@ -113,15 +69,18 @@ internal static class Mp3MetadataReader
 
     private static TimeSpan? ParseDuration(byte[] buf, long fileSize, int id3Size)
     {
-        if (buf.Length < 4)
+        if (buf.Length < Mp3Format.FrameHeaderSize)
             return null;
 
         int pos = 0; // buf already starts at the first audio frame
 
-        while (pos <= buf.Length - 4)
+        while (pos <= buf.Length - Mp3Format.FrameHeaderSize)
         {
-            // Sync detection: 0xFF + upper 3 bits set
-            if (buf[pos] != 0xFF || (buf[pos + 1] & 0xE0) != 0xE0)
+            // Sync detection: 0xFF + upper 3 bits set (11-bit sync word per ISO 11172-3)
+            if (
+                buf[pos] != Mp3Format.SyncByte
+                || (buf[pos + 1] & Mp3Format.SyncMask) != Mp3Format.SyncMask
+            )
             {
                 pos++;
                 continue;
@@ -137,29 +96,31 @@ internal static class Mp3MetadataReader
             int srIdx = (h2 >> 2) & 0x03;
             int channelMode = (h3 >> 6) & 0x03; // 3 = Mono
 
+            // version 1=reserved; layer must be 1 for Layer III; bitrateIdx 0=free, 15=forbidden; srIdx 3=reserved
             if (version == 1 || layer != 1 || bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3)
             {
                 pos++;
                 continue;
             }
 
-            bool isMpeg1 = version == 3;
-            int bitrate = (isMpeg1 ? Mpeg1L3Bitrate : Mpeg2L3Bitrate)[bitrateIdx] * 1000;
-            int sampleRate = SampleRates[version][srIdx];
+            bool isMpeg1 = version == Mp3Format.Mpeg1Version;
+            int bitrate =
+                (isMpeg1 ? Mp3Format.Mpeg1L3Bitrate : Mp3Format.Mpeg2L3Bitrate)[bitrateIdx] * 1_000; // kbps → bps
+            int sampleRate = Mp3Format.SampleRates[version][srIdx];
             if (sampleRate == 0)
             {
                 pos++;
                 continue;
             }
 
-            // MPEG1 Layer3 = 1152 samples/frame, MPEG2/2.5 Layer3 = 576 samples/frame
-            int samplesPerFrame = isMpeg1 ? 1152 : 576;
+            int samplesPerFrame = isMpeg1
+                ? Mp3Format.SamplesPerFrameMpeg1
+                : Mp3Format.SamplesPerFrameMpeg2;
 
             // Try Xing/Info header for exact frame count
-            bool isMono = channelMode == 3;
-            int xingOffset = pos + XingHeaderOffset(isMpeg1, isMono);
+            int xingOffset = pos + Mp3Format.XingHeaderOffset(version, channelMode);
 
-            if (xingOffset + 12 <= buf.Length)
+            if (xingOffset + 12 <= buf.Length) // 12 = 4-byte sig + 4-byte flags + 4-byte frame count
             {
                 bool isXing =
                     buf[xingOffset] == (byte)'X'
@@ -175,7 +136,7 @@ internal static class Mp3MetadataReader
                 if (isXing || isInfo)
                 {
                     uint flags = ReadBigEndianUInt32(buf, xingOffset + 4);
-                    if ((flags & 0x01) != 0) // frame count field present at offset +8
+                    if ((flags & Mp3Format.XingFlagFrameCount) != 0) // frame count present at offset +8
                     {
                         uint frameCount = ReadBigEndianUInt32(buf, xingOffset + 8);
                         if (frameCount > 0)
@@ -196,15 +157,6 @@ internal static class Mp3MetadataReader
 
         return null;
     }
-
-    private static int XingHeaderOffset(bool isMpeg1, bool isMono) =>
-        (isMpeg1, isMono) switch
-        {
-            (true, false) => 36, // MPEG1 stereo:  4-byte header + 32-byte side info
-            (true, true) => 21, //  MPEG1 mono:    4-byte header + 17-byte side info
-            (false, false) => 21, // MPEG2/2.5 stereo
-            (false, true) => 13, //  MPEG2/2.5 mono: 4-byte header + 9-byte side info
-        };
 
     private static uint ReadBigEndianUInt32(byte[] buf, int offset) =>
         ((uint)buf[offset] << 24)

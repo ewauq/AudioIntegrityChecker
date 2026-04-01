@@ -71,6 +71,18 @@ public sealed class MainForm : Form
     private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 20;
 
+    // Initial column widths in pixels (user-resizable at runtime)
+    private const int ColDirWidth = 200;
+    private const int ColFileWidth = 200;
+    private const int ColDurationWidth = 65;
+    private const int ColFormatWidth = 55;
+    private const int ColResultWidth = 58;
+    private const int ColSeverityWidth = 75;
+    private const int ColMessageWidth = 420;
+    private const int ColErrorWidth = 200;
+
+    private const int RamUpdateIntervalMs = 1_000; // 1 s refresh for the RAM indicator in the status bar
+
     public MainForm()
     {
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
@@ -89,13 +101,13 @@ public sealed class MainForm : Form
             GridLines = false,
             OwnerDraw = true,
         };
-        _listView.Columns.Add("Directory", 200);
-        _listView.Columns.Add("File", 200);
+        _listView.Columns.Add("Directory", ColDirWidth);
+        _listView.Columns.Add("File", ColFileWidth);
         _listView.Columns.Add(
             new ColumnHeader
             {
                 Text = "Duration",
-                Width = 65,
+                Width = ColDurationWidth,
                 TextAlign = HorizontalAlignment.Center,
             }
         );
@@ -103,7 +115,7 @@ public sealed class MainForm : Form
             new ColumnHeader
             {
                 Text = "Format",
-                Width = 55,
+                Width = ColFormatWidth,
                 TextAlign = HorizontalAlignment.Center,
             }
         );
@@ -111,7 +123,7 @@ public sealed class MainForm : Form
             new ColumnHeader
             {
                 Text = "Result",
-                Width = 58,
+                Width = ColResultWidth,
                 TextAlign = HorizontalAlignment.Center,
             }
         );
@@ -119,12 +131,12 @@ public sealed class MainForm : Form
             new ColumnHeader
             {
                 Text = "Severity",
-                Width = 75,
+                Width = ColSeverityWidth,
                 TextAlign = HorizontalAlignment.Center,
             }
         );
-        _listView.Columns.Add("Message", 420);
-        _listView.Columns.Add("Error", 200);
+        _listView.Columns.Add("Message", ColMessageWidth);
+        _listView.Columns.Add("Error", ColErrorWidth);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
         _listView.KeyDown += OnListViewKeyDown;
@@ -224,7 +236,7 @@ public sealed class MainForm : Form
             _labelMpg123,
         ]);
 
-        _ramTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _ramTimer = new System.Windows.Forms.Timer { Interval = RamUpdateIntervalMs };
         _ramTimer.Tick += (_, _) =>
             _labelRam.Text = $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}";
         _ramTimer.Start();
@@ -309,7 +321,7 @@ public sealed class MainForm : Form
     private async Task ScanAsync(string[] droppedPaths, CancellationToken cancellationToken)
     {
         _globalBar.Style = ProgressBarStyle.Marquee;
-        _globalBar.MarqueeAnimationSpeed = 30;
+        _globalBar.MarqueeAnimationSpeed = 30; // Windows marquee speed unit (lower = faster)
         ShowGlobalBar(true);
 
         List<FileEntry> entries;
@@ -427,7 +439,7 @@ public sealed class MainForm : Form
             stopwatch.Stop();
 
             string timeText =
-                stopwatch.Elapsed.TotalSeconds < 60
+                stopwatch.Elapsed.TotalSeconds < 60 // format as "Xs" if under a minute, otherwise "Xm YYs"
                     ? $"{stopwatch.Elapsed.TotalSeconds:F1}s"
                     : $"{(int)stopwatch.Elapsed.TotalMinutes}m {stopwatch.Elapsed.Seconds:D2}s";
             int n = _completedFiles;
@@ -829,7 +841,7 @@ public sealed class MainForm : Form
             );
 
         var textBounds = new Rectangle(
-            e.Bounds.X + 3,
+            e.Bounds.X + 3, // 3 px left/right padding inside each cell
             e.Bounds.Y,
             e.Bounds.Width - 6,
             e.Bounds.Height

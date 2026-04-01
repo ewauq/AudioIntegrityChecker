@@ -6,6 +6,9 @@ namespace AudioIntegrityChecker.Checkers.Mp3;
 [SupportedOSPlatform("windows")]
 internal static class Mp3Mpg123Backend
 {
+    // 1152 samples/frame × 2 channels × 4 bytes/sample (float32) = 9216 bytes
+    private const int MaxDecodedFrameBytes = 9216;
+
     private static bool? _libraryAvailable;
     private static bool _initialized;
     private static readonly object _initLock = new();
@@ -78,9 +81,7 @@ internal static class Mp3Mpg123Backend
 
             Mp3NativeMethods.mpg123_feed(mh, fileBuffer, (nuint)fileBuffer.Length);
 
-            // 9216 bytes: safe upper bound for one decoded MP3 frame
-            // (1152 samples × 2 channels × 4 bytes/sample for float32)
-            var outBuf = new byte[9216];
+            var outBuf = new byte[MaxDecodedFrameBytes];
             while (true)
             {
                 rc = Mp3NativeMethods.mpg123_read(mh, outBuf, (nuint)outBuf.Length, out _);

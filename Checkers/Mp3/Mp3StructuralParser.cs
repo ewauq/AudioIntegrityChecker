@@ -8,75 +8,17 @@ namespace AudioIntegrityChecker.Checkers.Mp3;
 internal static class Mp3StructuralParser
 {
     // -------------------------------------------------------------------------
-    // Frame structure constants
+    // Frame structure constants (local to structural parsing)
     // -------------------------------------------------------------------------
 
-    private const int FrameHeaderSize = 4; // bytes 0–3: sync + version/layer + bitrate/sr + channels
     private const int FrameCrcSize = 2; // bytes 4–5 when protection_bit == 0
     private const int Id3v1TagSize = 128; // ID3v1 tag is always exactly 128 bytes
 
-    // Sync word: first byte must be 0xFF, upper 3 bits of second byte must be set (0b111xxxxx).
-    // Together they form the 11-bit sync pattern required by ISO 11172-3.
-    private const byte SyncByte = 0xFF;
-    private const byte SyncMask = 0xE0; // 0b11100000
+    // Offset within the Xing/Info frame where the LAME extension block begins (fixed for all MPEG versions)
+    private const int LameTagRelativeOffset = 120;
 
-    // -------------------------------------------------------------------------
-    // Bitrate tables (kbps) for MPEG Layer III
-    // Index 0 (free bitrate) and 15 (bad) are invalid — both stored as 0.
-    // -------------------------------------------------------------------------
-
-    private static readonly int[] Mpeg1L3Bitrate =
-    [
-        0,
-        32,
-        40,
-        48,
-        56,
-        64,
-        80,
-        96,
-        112,
-        128,
-        160,
-        192,
-        224,
-        256,
-        320,
-        0,
-    ];
-
-    private static readonly int[] Mpeg2L3Bitrate =
-    [
-        0,
-        8,
-        16,
-        24,
-        32,
-        40,
-        48,
-        56,
-        64,
-        80,
-        96,
-        112,
-        128,
-        144,
-        160,
-        0,
-    ];
-
-    // -------------------------------------------------------------------------
-    // Sample rate tables (Hz) indexed by [version][srIdx]
-    // version: 0=MPEG2.5, 1=reserved, 2=MPEG2, 3=MPEG1
-    // -------------------------------------------------------------------------
-
-    private static readonly int[][] SampleRates =
-    [
-        [11025, 12000, 8000, 0], // 0 = MPEG 2.5
-        [0, 0, 0, 0], // 1 = reserved
-        [22050, 24000, 16000, 0], // 2 = MPEG 2
-        [44100, 48000, 32000, 0], // 3 = MPEG 1
-    ];
+    // Shared MPEG format constants (sync bytes, frame header size, bitrate/sample-rate tables,
+    // samples-per-frame, ID3v2 layout, Xing/Info offsets) live in Mp3Format.
 
     // -------------------------------------------------------------------------
     // Public entry point
@@ -86,21 +28,24 @@ internal static class Mp3StructuralParser
     {
         var diagnostics = new List<(Mp3Diagnostic, long)>();
 
-        if (buf.Length < FrameHeaderSize)
+        if (buf.Length < Mp3Format.FrameHeaderSize)
             return diagnostics;
 
         int pos = SkipId3v2(buf);
         long frameCount = 0;
         int firstFramePos = -1;
-        int firstVersion = 3; // default MPEG1
+        int firstVersion = Mp3Format.Mpeg1Version; // default MPEG1
         int firstChannelMode = 0; // default stereo
 
-        while (pos <= buf.Length - FrameHeaderSize)
+        while (pos <= buf.Length - Mp3Format.FrameHeaderSize)
         {
             // ----------------------------------------------------------------
             // Sync detection
             // ----------------------------------------------------------------
-            if (buf[pos] != SyncByte || (buf[pos + 1] & SyncMask) != SyncMask)
+            if (
+                buf[pos] != Mp3Format.SyncByte
+                || (buf[pos + 1] & Mp3Format.SyncMask) != Mp3Format.SyncMask
+            )
             {
                 if (frameCount == 0)
                 {
@@ -152,14 +97,22 @@ internal static class Mp3StructuralParser
                 continue;
             }
 
-            int bitrate = (version == 3 ? Mpeg1L3Bitrate : Mpeg2L3Bitrate)[bitrateIdx] * 1000; // version 3 = MPEG1; table is kbps → bps
-            int sampleRate = SampleRates[version][srIdx];
+            int bitrate =
+                (
+                    version == Mp3Format.Mpeg1Version
+                        ? Mp3Format.Mpeg1L3Bitrate
+                        : Mp3Format.Mpeg2L3Bitrate
+                )[bitrateIdx] * 1_000; // kbps → bps
+            int sampleRate = Mp3Format.SampleRates[version][srIdx];
             // MPEG-1 Layer III:       1152 samples/frame → coefficient 144 (1152/8)
-            // MPEG-2 / MPEG-2.5 L3:   576 samples/frame → coefficient  72  (576/8)
-            int coefficient = version == 3 ? 144 : 72;
+            // MPEG-2 / MPEG-2.5 L3:   576 samples/frame → coefficient  72  ( 576/8)
+            int coefficient =
+                version == Mp3Format.Mpeg1Version
+                    ? Mp3Format.FrameSizeCoeffMpeg1
+                    : Mp3Format.FrameSizeCoeffMpeg2;
             int frameSize = (coefficient * bitrate / sampleRate) + paddingBit;
 
-            if (frameSize < 4)
+            if (frameSize < Mp3Format.FrameHeaderSize)
             {
                 // Degenerate — skip one byte and resync
                 pos++;
@@ -169,20 +122,25 @@ internal static class Mp3StructuralParser
             // ----------------------------------------------------------------
             // CRC-16 check (if protection_bit == 0, CRC is present)
             // ----------------------------------------------------------------
-            if (protectionBit == 0 && pos + FrameHeaderSize + FrameCrcSize - 1 < buf.Length)
+            if (
+                protectionBit == 0
+                && pos + Mp3Format.FrameHeaderSize + FrameCrcSize - 1 < buf.Length
+            )
             {
                 // CRC is stored in bytes 4–5 (immediately after the 4-byte header)
-                int crcStored = (buf[pos + FrameHeaderSize] << 8) | buf[pos + FrameHeaderSize + 1];
+                int crcStored =
+                    (buf[pos + Mp3Format.FrameHeaderSize] << 8)
+                    | buf[pos + Mp3Format.FrameHeaderSize + 1];
                 int sideInfoLen = SideInfoLength(version, channelMode);
 
-                if (pos + FrameHeaderSize + FrameCrcSize + sideInfoLen <= buf.Length)
+                if (pos + Mp3Format.FrameHeaderSize + FrameCrcSize + sideInfoLen <= buf.Length)
                 {
                     // CRC covers header bytes 2–3 (h2 and h3), then the side information block
                     ushort crcComputed = Crc16(0xFFFF, buf, pos + 2, 2);
                     crcComputed = Crc16(
                         crcComputed,
                         buf,
-                        pos + FrameHeaderSize + FrameCrcSize,
+                        pos + Mp3Format.FrameHeaderSize + FrameCrcSize,
                         sideInfoLen
                     );
 
@@ -253,7 +211,7 @@ internal static class Mp3StructuralParser
         List<(Mp3Diagnostic, long)> diagnostics
     )
     {
-        int xingOffset = firstFramePos + XingHeaderOffset(version, channelMode);
+        int xingOffset = firstFramePos + Mp3Format.XingHeaderOffset(version, channelMode);
 
         // Need at least the 4-byte signature + 4-byte flags field
         if (xingOffset + 8 > buf.Length)
@@ -279,9 +237,12 @@ internal static class Mp3StructuralParser
         uint flags = ReadBigEndianUInt32(buf, xingOffset + 4);
 
         // Bit 0 of flags: frame count field is present (at offset +8, after 4-byte sig + 4-byte flags)
-        if ((flags & 0x01) != 0 && xingOffset + 12 <= buf.Length) // 12 = 4 sig + 4 flags + 4 frame count
+        if (
+            (flags & Mp3Format.XingFlagFrameCount) != 0
+            && xingOffset + 12 <= buf.Length // 12 = 4 sig + 4 flags + 4 frame count
+        )
         {
-            uint storedFrameCount = ReadBigEndianUInt32(buf, xingOffset + 8); // offset +8: right after flags
+            uint storedFrameCount = ReadBigEndianUInt32(buf, xingOffset + 8); // right after flags
             // Allow a difference of 1: some encoders store the frame count excluding
             // the header frame itself (the frame that contains the Xing/Info tag),
             // while our scanner counts every MPEG frame including that first one.
@@ -295,10 +256,10 @@ internal static class Mp3StructuralParser
             }
         }
 
-        // LAME tag: "LAME" signature at xingOffset + 120
-        // The Xing/Info frame is structured so the LAME extension always starts at a fixed
-        // offset of 120 bytes after the Xing/Info signature, regardless of VBR/CBR or version.
-        int lameTagPos = xingOffset + 120;
+        // LAME tag: "LAME" signature at xingOffset + LameTagRelativeOffset (120 bytes).
+        // The Xing/Info frame is structured so the LAME extension always starts at this fixed
+        // offset after the Xing/Info signature, regardless of VBR/CBR or MPEG version.
+        int lameTagPos = xingOffset + LameTagRelativeOffset;
         if (lameTagPos + 4 > buf.Length)
             return;
 
@@ -332,9 +293,7 @@ internal static class Mp3StructuralParser
 
     private static int SkipId3v2(byte[] buf)
     {
-        const int Id3v2HeaderSize = 10; // 3 "ID3" + 2 version + 1 flags + 4 syncsafe size
-
-        if (buf.Length < Id3v2HeaderSize)
+        if (buf.Length < Mp3Format.Id3v2HeaderSize)
             return 0;
 
         if (buf[0] != (byte)'I' || buf[1] != (byte)'D' || buf[2] != (byte)'3')
@@ -349,9 +308,10 @@ internal static class Mp3StructuralParser
         int tagSize = (buf[6] << 21) | (buf[7] << 14) | (buf[8] << 7) | buf[9];
 
         // Flags byte (buf[5]) bit 4: footer present — adds another 10-byte block after the tag
-        bool hasFooter = (buf[5] & 0x10) != 0;
+        bool hasFooter = (buf[5] & Mp3Format.Id3v2FooterFlag) != 0;
 
-        int skip = Id3v2HeaderSize + tagSize + (hasFooter ? Id3v2HeaderSize : 0);
+        int skip =
+            Mp3Format.Id3v2HeaderSize + tagSize + (hasFooter ? Mp3Format.Id3v2HeaderSize : 0);
         return Math.Min(skip, buf.Length);
     }
 
@@ -363,31 +323,20 @@ internal static class Mp3StructuralParser
     {
         for (int i = from; i <= buf.Length - 2; i++)
         {
-            if (buf[i] == SyncByte && (buf[i + 1] & SyncMask) == SyncMask)
+            if (
+                buf[i] == Mp3Format.SyncByte
+                && (buf[i + 1] & Mp3Format.SyncMask) == Mp3Format.SyncMask
+            )
                 return i;
         }
         return -1;
     }
 
-    /// <summary>Returns the byte offset of the Xing/Info tag from the start of the first frame.</summary>
-    private static int XingHeaderOffset(int version, int channelMode)
-    {
-        bool isMpeg1 = version == 3;
-        bool isMono = channelMode == 3;
-        return (isMpeg1, isMono) switch
-        {
-            (true, false) => 36, // MPEG1 stereo/joint/dual: 4-byte header + 32-byte side info
-            (true, true) => 21, // MPEG1 mono:              4-byte header + 17-byte side info
-            (false, false) => 21, // MPEG2/2.5 stereo:        4-byte header + 17-byte side info
-            (false, true) => 13, // MPEG2/2.5 mono:          4-byte header +  9-byte side info
-        };
-    }
-
     /// <summary>Returns the side information length in bytes for CRC computation.</summary>
     private static int SideInfoLength(int version, int channelMode)
     {
-        bool isMpeg1 = version == 3;
-        bool isMono = channelMode == 3;
+        bool isMpeg1 = version == Mp3Format.Mpeg1Version;
+        bool isMono = channelMode == Mp3Format.MonoChannelMode;
         return (isMpeg1, isMono) switch
         {
             (true, false) => 32,
