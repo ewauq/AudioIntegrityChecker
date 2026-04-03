@@ -19,6 +19,7 @@ internal static class HelpContent
             border-bottom: 1px solid #ccc;
         }
         .ok { color: #2e7d32; }
+        .muted { color: #666; }
         .section-title {
             font-weight: bold;
             margin-top: 12px;
@@ -28,6 +29,15 @@ internal static class HelpContent
         .placeholder {
             color: #999;
             font-style: italic;
+        }
+        ul { padding-left: 20px; margin: 6px 0; }
+        li { margin-bottom: 4px; }
+        kbd {
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-size: 8pt;
         }
         """;
 
@@ -50,6 +60,28 @@ internal static class HelpContent
         ["UNPARSEABLE_STREAM"] = "Unparseable Stream",
         ["TRAILING_GARBAGE"] = "Trailing Garbage",
     };
+
+    internal static string GetWelcomeHtml() =>
+        WrapHtml(
+            """
+            <h2>Getting started</h2>
+            <p>Add audio files to check their integrity:</p>
+            <ul>
+                <li><b>File &gt; Add folder...</b> to scan an entire directory</li>
+                <li><b>File &gt; Add files...</b> to select individual files</li>
+                <li><b>Drag and drop</b> files or folders into the window</li>
+            </ul>
+            <p class="muted">Then click <b>Start scan</b> to begin the analysis.</p>
+            """
+        );
+
+    internal static string GetSelectFileHtml() =>
+        WrapHtml(
+            """
+            <h2 class="muted">No file selected</h2>
+            <p class="muted">Click on a file in the list to view its analysis details.</p>
+            """
+        );
 
     internal static string GetHtml(string? diagnosticKey)
     {

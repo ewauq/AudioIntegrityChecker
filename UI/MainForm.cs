@@ -106,6 +106,7 @@ public sealed class MainForm : Form
             FullRowSelect = true,
             GridLines = false,
             OwnerDraw = true,
+            BorderStyle = BorderStyle.None,
         };
         _listView.Columns.Add("Directory", ColDirWidth);
         _listView.Columns.Add("File", ColFileWidth);
@@ -150,20 +151,30 @@ public sealed class MainForm : Form
         _listView.DrawItem += (_, _) => { };
         _listView.DrawSubItem += OnDrawSubItem;
 
-        var listPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(6, 0, 6, 6) };
-        listPanel.Controls.Add(_listView);
+        var listBorderPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(1, 1, 0, 1), // left, top, no right, bottom
+            BackColor = SystemColors.ControlDark,
+        };
+        var listInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
+        listInnerPanel.Controls.Add(_listView);
+        listBorderPanel.Controls.Add(listInnerPanel);
+
+        var listPanel = new Panel { Dock = DockStyle.Fill };
+        listPanel.Controls.Add(listBorderPanel);
 
         _htmlPanel = new HtmlPanel
         {
             Dock = DockStyle.Fill,
             AutoScroll = true,
-            Text = HelpContent.GetHtml(null),
+            Text = HelpContent.GetWelcomeHtml(),
         };
 
         var helpBorderPanel = new Panel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(1, 1, 0, 0),
+            Padding = new Padding(0, 1, 1, 1), // no left, top, right, bottom
             BackColor = SystemColors.ControlDark,
         };
         var helpInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
@@ -190,7 +201,7 @@ public sealed class MainForm : Form
         };
         _statusLabel = new Label
         {
-            Text = "Drop audio files into the window and click Start scan.",
+            Text = "",
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
             Width = 600,
@@ -219,9 +230,10 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
             FixedPanel = FixedPanel.Panel2,
+            SplitterWidth = 1,
+            BackColor = SystemColors.ControlDark,
         };
         _splitContainer.Panel1.Controls.Add(listPanel);
-        _splitContainer.Panel1.Controls.Add(_bottomPanel);
         _splitContainer.Panel2.Controls.Add(helpBorderPanel);
 
         _globalBarWrapper = new Panel
@@ -315,6 +327,7 @@ public sealed class MainForm : Form
         _ramTimer.Start();
 
         Controls.Add(_splitContainer);
+        Controls.Add(_bottomPanel);
         Controls.Add(_menuStrip);
         Controls.Add(_statusStrip);
         MainMenuStrip = _menuStrip;
@@ -548,6 +561,7 @@ public sealed class MainForm : Form
         SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
         UpdateStatusBar();
+        UpdateHelpPanel();
         SetAnalysing(false);
     }
 
@@ -657,7 +671,8 @@ public sealed class MainForm : Form
         _countError = 0;
 
         UpdateStatusBar();
-        SetStatus("Drop audio files into the window and click Start scan.");
+        UpdateHelpPanel();
+        SetStatus("");
         SetAnalysing(false);
         TrimWorkingSet();
     }
@@ -775,24 +790,30 @@ public sealed class MainForm : Form
         }
     }
 
-    private void OnSelectedIndexChanged(object? sender, EventArgs e)
-    {
-        if (!_splitContainer.Panel2Collapsed)
-            UpdateHelpPanel();
-    }
+    private void OnSelectedIndexChanged(object? sender, EventArgs e) => UpdateHelpPanel();
 
     private void UpdateHelpPanel()
     {
-        string? diagnosticKey = null;
-        if (_listView.SelectedItems.Count > 0)
+        if (_splitContainer.Panel2Collapsed)
+            return;
+
+        if (_listView.Items.Count == 0)
         {
-            var item = _listView.SelectedItems[0];
-            var errorText = item.SubItems[ColError].Text;
-            if (!string.IsNullOrEmpty(errorText))
-                diagnosticKey = errorText;
+            _htmlPanel.Text = HelpContent.GetWelcomeHtml();
+            return;
         }
 
-        _htmlPanel.Text = HelpContent.GetHtml(diagnosticKey);
+        if (_listView.SelectedItems.Count == 0)
+        {
+            _htmlPanel.Text = HelpContent.GetSelectFileHtml();
+            return;
+        }
+
+        var item = _listView.SelectedItems[0];
+        var errorText = item.SubItems[ColError].Text;
+        _htmlPanel.Text = string.IsNullOrEmpty(errorText)
+            ? HelpContent.GetHtml(null)
+            : HelpContent.GetHtml(errorText);
     }
 
     private void SetAnalysing(bool active)
