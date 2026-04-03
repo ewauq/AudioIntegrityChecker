@@ -191,7 +191,7 @@ public sealed class MainForm : Form
             Width = 90,
             Height = 26,
             Enabled = false,
-            Margin = new Padding(1, 0, 4, 0),
+            Margin = new Padding(0, 0, 4, 0),
         };
         _cancelButton = new Button
         {
@@ -216,7 +216,7 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Top,
             Height = ButtonRowHeight,
-            Padding = new Padding(4, 4, 4, 0),
+            Padding = new Padding(6),
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
         };
