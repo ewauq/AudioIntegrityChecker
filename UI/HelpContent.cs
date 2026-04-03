@@ -85,18 +85,22 @@ internal static class HelpContent
 
         if (DiagnosticEntries.TryGetValue(firstKey, out var entry))
         {
-            return WrapHtml(
-                $"""
-                <h2>{entry.Title}</h2>
-                {locationHtml}
-                <div class="section-title">Technical explanation</div>
-                <p>{entry.Technical}</p>
-                <div class="section-title">What does this mean?</div>
-                <p>{entry.Simple}</p>
-                <div class="section-title">How to fix</div>
-                {entry.Fix}
-                """
+            var sections = new System.Text.StringBuilder();
+            sections.Append(locationHtml);
+
+            sections.Append(
+                $"""<div class="section-title">Technical explanation</div><p>{entry.Technical}</p>"""
             );
+
+            if (!string.IsNullOrEmpty(entry.Simple))
+                sections.Append(
+                    $"""<div class="section-title">What does this mean?</div><p>{entry.Simple}</p>"""
+                );
+
+            sections.Append($"""<div class="section-title">Causes</div>{entry.Causes}""");
+            sections.Append($"""<div class="section-title">How to fix</div>{entry.Fix}""");
+
+            return WrapHtml($"<h2>{entry.Title}</h2>{sections}");
         }
 
         return WrapHtml(
@@ -108,174 +112,272 @@ internal static class HelpContent
         );
     }
 
-    private record DiagnosticEntry(string Title, string Technical, string Simple, string Fix);
+    private record DiagnosticEntry(
+        string Title,
+        string Technical,
+        string? Simple,
+        string Causes,
+        string Fix
+    );
 
     private static readonly Dictionary<string, DiagnosticEntry> DiagnosticEntries = new(
         StringComparer.OrdinalIgnoreCase
     )
     {
         ["FRAME_CRC_MISMATCH"] = new(
-            "Frame CRC Mismatch",
-            "Each audio frame contains a CRC-16 checksum that protects the frame header and audio data. "
-                + "The checksum computed from the actual data does not match the stored value, which means "
-                + "the audio samples in this frame have been altered after encoding.",
-            "Part of the audio in this file is corrupted. You may hear glitches, clicks, or silence "
-                + "at the position indicated above. The damage is limited to the affected frame(s).",
-            """
+            Title: "Frame CRC Mismatch",
+            Technical: "Each audio frame can carry a CRC-16 checksum that protects the frame header "
+                + "and side information (MP3) or the entire frame including audio samples (FLAC). "
+                + "The checksum recomputed from the file data does not match the stored value, "
+                + "proving that the protected bytes have been altered after encoding.",
+            Simple: "Part of the audio data in this file has been modified or damaged since it was created. "
+                + "You may hear clicks, glitches, or silence at the indicated position.",
+            Causes: """
             <ul>
-                <li>If you have a backup, replace the file with the original</li>
-                <li>Re-download the file from its source</li>
-                <li>Re-encode from the original lossless source if available</li>
+                <li>Bit flips on the storage medium (failing hard drive, SSD wear)</li>
+                <li>Errors during file transfer (network interruption, incomplete copy)</li>
+                <li>RAM corruption during read or write operations</li>
+                <li>Software bug in a tool that modified the file without recalculating the checksum</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>Replace the file from a backup or re-download it from the original source</li>
+                <li>Re-encode from the lossless source if available</li>
+                <li><b>FLAC:</b> use <i>flac -t</i> to confirm, then re-encode from the original source</li>
+                <li><b>MP3:</b> use mp3val to diagnose and attempt repair of the damaged frame</li>
             </ul>
             """
         ),
         ["TRUNCATED_STREAM"] = new(
-            "Truncated Stream",
-            "The audio stream ends abruptly before the expected number of frames. "
-                + "The file size is smaller than what the frame headers indicate, suggesting "
-                + "the file was cut short during transfer or encoding.",
-            "The file is incomplete — the audio stops before the end of the track. "
-                + "Your player may cut off the last few seconds or report an incorrect duration.",
-            """
+            Title: "Truncated Stream",
+            Technical: "The last audio frame header declares a frame size that extends beyond the end of the file. "
+                + "The frame header is valid but its payload is incomplete. "
+                + "An exception is made for files ending with an ID3v1 tag, "
+                + "which is not counted as truncation.",
+            Simple: "The file is incomplete. The audio stops before the end of the track. "
+                + "Your player may report a shorter duration or cut off the last few seconds.",
+            Causes: """
             <ul>
-                <li>Re-download the file — the transfer was likely interrupted</li>
-                <li>Re-encode from the original source</li>
-                <li>If the truncation is minor, some players can still play what's available</li>
+                <li>Download interrupted before completion</li>
+                <li>Disk full during encoding or file copy</li>
+                <li>Power loss or application crash while the file was being written</li>
+                <li>Partial file copy (e.g. removable media ejected too early)</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>Re-download the file from its source</li>
+                <li>Restore from a backup</li>
+                <li>If the source is gone, the missing audio at the end cannot be recovered</li>
             </ul>
             """
         ),
         ["DECODE_ERROR"] = new(
-            "Decode Error",
-            "The decoder (mpg123 or libFLAC) encountered data that it could not interpret as valid audio. "
-                + "This may be caused by severe corruption, an unsupported encoding feature, or "
-                + "a file that is not actually in the declared format.",
-            "The file cannot be played correctly. The audio data is either severely damaged or "
-                + "the file is not a valid audio file despite its extension.",
-            """
+            Title: "Decode Error",
+            Technical: "The decoder returned an error while attempting to decompress the audio data "
+                + "into PCM samples. This second-pass check runs after the structural analysis and "
+                + "catches corruption that frame-level checks cannot detect, such as invalid compression "
+                + "tables inside a frame.",
+            Simple: "The audio data is damaged beyond what the file structure can reveal. "
+                + "The decoder cannot reconstruct the original sound at the indicated position.",
+            Causes: """
             <ul>
-                <li>Verify the file is actually an audio file (check with a hex editor or <kbd>file</kbd> command)</li>
-                <li>Re-download or re-encode from the original source</li>
-                <li>If the file plays in some players, it may use a non-standard extension that this tool does not support</li>
+                <li>Severe corruption of the audio data within frames</li>
+                <li>File is not actually an MP3 despite its extension</li>
+                <li>Encoder produced non-standard output that the decoder cannot interpret</li>
+                <li>Storage medium failure affecting audio data</li>
             </ul>
-            """
-        ),
-        ["UNPARSEABLE_STREAM"] = new(
-            "Unparseable Stream",
-            "The FLAC decoder could not interpret the audio stream at all. "
-                + "The file structure violates the FLAC specification in a fundamental way — "
-                + "this is beyond a simple frame error.",
-            "The file is severely damaged and cannot be read as a FLAC file. "
-                + "Most players will refuse to open it or produce no sound at all.",
-            """
+            """,
+            Fix: """
             <ul>
-                <li>Re-download or restore from backup</li>
-                <li>If this is a conversion artifact, re-encode from the original source</li>
-            </ul>
-            """
-        ),
-        ["TRAILING_GARBAGE"] = new(
-            "Trailing Garbage",
-            "Non-audio data was found appended after the last valid audio frame. "
-                + "This is typically caused by incomplete file transfers, concatenation errors, "
-                + "or software that appends metadata in a non-standard way.",
-            "The audio itself is fine — the extra data at the end does not affect playback. "
-                + "However, some players may report an incorrect duration or show a brief glitch at the end.",
-            """
-            <ul>
-                <li>This is usually harmless and does not require action</li>
-                <li>To clean up: re-encode the file or use a tool that can strip trailing data</li>
-                <li>If the file was transferred over a network, verify the transfer completed correctly</li>
-            </ul>
-            """
-        ),
-        ["LOST_SYNC"] = new(
-            "Lost Sync",
-            "The decoder lost synchronization with the audio frame boundaries. "
-                + "This means the expected frame sync pattern was not found where it should be, "
-                + "indicating corrupted or missing data at that position in the stream.",
-            "The audio stream is interrupted at the indicated position. "
-                + "You may hear a brief skip or glitch. In many cases the decoder recovers "
-                + "and the rest of the audio plays normally.",
-            """
-            <ul>
-                <li>If the file plays correctly, this may be benign (minor stream anomaly)</li>
-                <li>Re-download if the glitch is audible</li>
+                <li>Replace the file from a backup or re-download it</li>
+                <li>Verify the file is actually an MP3 (check with a hex editor or the <i>file</i> command)</li>
                 <li>Re-encode from the original lossless source if available</li>
             </ul>
             """
         ),
-        ["BAD_HEADER"] = new(
-            "Bad Header",
-            "A frame header contains invalid field values — for example an unsupported bitrate index, "
-                + "sample rate, or layer combination. The decoder skips the malformed frame "
-                + "and attempts to resynchronize with the next valid frame.",
-            "One of the audio frames has a corrupted header. The audio content is likely intact "
-                + "since most decoders simply skip the bad frame. You may notice a very brief skip.",
-            """
+        ["UNPARSEABLE_STREAM"] = new(
+            Title: "Unparseable Stream",
+            Technical: "The FLAC decoder cannot interpret the stream structure at all. "
+                + "This goes beyond a single bad frame: "
+                + "the metadata blocks or the basic stream layout "
+                + "violates the FLAC specification in a fundamental way.",
+            Simple: "The file is too severely damaged to be read as a FLAC file. "
+                + "Most players will refuse to open it or produce no sound.",
+            Causes: """
             <ul>
-                <li>Usually harmless — the audio is likely fine</li>
-                <li>Re-encode if you want a perfectly clean file</li>
-                <li>This can occur when files are edited with tools that don't properly recalculate headers</li>
+                <li>The file is not actually a FLAC file (wrong format, renamed extension)</li>
+                <li>Severe corruption of the file header or metadata blocks</li>
+                <li>File was only partially written (encoding aborted very early)</li>
+                <li>A conversion tool produced invalid FLAC output</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>Verify the file is actually a FLAC file</li>
+                <li>Replace from a backup or re-download</li>
+                <li>Re-encode from the original source if available</li>
+            </ul>
+            """
+        ),
+        ["TRAILING_GARBAGE"] = new(
+            Title: "Trailing Garbage",
+            Technical: "After the decoder successfully processed all audio samples declared in the stream metadata, "
+                + "it found additional data that is not a valid audio frame. "
+                + "The error occurs at a position equal to or beyond the total sample count.",
+            Simple: "Extra non-audio data was found appended after the end of the audio stream. "
+                + "The audio itself is perfectly intact. Some players may show a slightly incorrect duration.",
+            Causes: """
+            <ul>
+                <li>A tag editor appended ID3 or APE tags after the FLAC stream</li>
+                <li>A tool left padding or temporary data at the end of the file</li>
+                <li>Two files were concatenated together</li>
+                <li>An incomplete re-encoding left leftover bytes</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>This is usually harmless and does not require action</li>
+                <li>To clean up, re-encode the file or strip trailing data with a FLAC tool</li>
+            </ul>
+            """
+        ),
+        ["LOST_SYNC"] = new(
+            Title: "Lost Sync",
+            Technical: "The decoder expected to find the next frame at a specific position "
+                + "(computed from the previous frame's size) but found unrecognizable data instead. "
+                + "For MP3, this means a significant gap before the next valid sync pattern. "
+                + "For FLAC, the decoder lost frame synchronization "
+                + "at a position before the declared end of the audio stream.",
+            Simple: "The audio stream is broken at the indicated position. "
+                + "You may hear a brief skip or a click. "
+                + "In most cases the decoder recovers and the rest of the audio plays normally.",
+            Causes: """
+            <ul>
+                <li>File corruption on the storage medium (bad sectors, failing drive)</li>
+                <li>Network error during file transfer (lost or reordered packets)</li>
+                <li>Power loss or crash while the file was being written</li>
+                <li>A tool modified the file without maintaining frame alignment</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>Re-download the file or restore from a backup</li>
+                <li>Re-encode from the original lossless source if available</li>
+                <li>If the skip is inaudible, the file may be acceptable as-is</li>
+            </ul>
+            """
+        ),
+        ["BAD_HEADER"] = new(
+            Title: "Bad Header",
+            Technical: "A frame sync pattern was found but the header fields that follow it are invalid. "
+                + "For MP3: the MPEG version, layer, bitrate, or sample rate field contains "
+                + "a reserved or forbidden value. "
+                + "For FLAC: the frame header contains invalid field values "
+                + "or its integrity check failed.",
+            Simple: "A frame header is unreadable. The decoder skips this frame and continues with the next one. "
+                + "You may notice a very brief gap (typically less than 30 ms) at the indicated position.",
+            Causes: """
+            <ul>
+                <li>Corruption in the frame header area (storage or memory error)</li>
+                <li>False sync detection: random data that happens to start with the sync pattern</li>
+                <li>A file editing tool that did not recalculate header fields after modification</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>Usually harmless since the decoder recovers automatically</li>
+                <li>Re-encode the file for a perfectly clean copy</li>
+                <li>Re-download if the cause is a transfer error</li>
             </ul>
             """
         ),
         ["JUNK_DATA"] = new(
-            "Junk Data",
-            "The file contains data between valid audio frames that is not recognized as audio, "
-                + "metadata tags (ID3v1, ID3v2, APE), or any known ancillary structure. "
-                + "This is often padding, leftover bytes from editing, or remnants of a previous encode.",
-            "The file contains unexpected extra data that is not part of the audio. "
-                + "Playback is not affected — players simply ignore this data.",
-            """
+            Title: "Junk Data",
+            Technical: "Between two valid audio frames, a small amount of data was found that does not belong to "
+                + "any recognized structure (audio frame, ID3 tag, APE tag). "
+                + "Larger gaps are classified as LOST_SYNC instead.",
+            Simple: "The file contains a few stray bytes between audio frames. "
+                + "This has no effect on playback. Players skip over these bytes silently.",
+            Causes: """
             <ul>
-                <li>This is cosmetic and does not affect audio quality</li>
-                <li>To clean up: re-encode or use an MP3 tool to strip non-audio data</li>
-                <li>Common after tag editors or format converters modify the file</li>
+                <li>A tag editor left alignment padding between frames</li>
+                <li>A conversion or editing tool inserted extra bytes</li>
+                <li>Minor file corruption that did not damage audio data</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>No action needed. The audio is intact.</li>
+                <li>To clean up, re-encode or use an MP3 repair tool to strip non-audio data</li>
             </ul>
             """
         ),
         ["XING_FRAME_COUNT_MISMATCH"] = new(
-            "Xing Frame Count Mismatch",
-            "The Xing/LAME VBR header at the start of the file declares a frame count that does not match "
-                + "the actual number of audio frames found in the stream. This header is used by players "
-                + "for seeking and duration display in variable bitrate files.",
-            "The file's navigation index is incorrect. The audio itself is fine, but your player "
-                + "may show the wrong duration or seek to slightly wrong positions.",
-            """
+            Title: "Xing Frame Count Mismatch",
+            Technical: "The Xing VBR header in the first audio frame stores a total frame count "
+                + "used for seeking and duration calculation in variable bitrate files. "
+                + "The stored count does not match the actual number of audio frames "
+                + "(a tolerance of +/- 1 frame is allowed to account for encoder differences).",
+            Simple: "The file's navigation index is wrong. The audio itself is fine, "
+                + "but your player may display an incorrect duration or seek to slightly wrong positions.",
+            Causes: """
             <ul>
-                <li>Use a VBR header repair tool (e.g., <kbd>VBRfix</kbd> or <kbd>mp3val</kbd>)</li>
-                <li>Re-encode to regenerate a correct VBR header</li>
-                <li>This does not affect audio quality — only seek accuracy and duration display</li>
+                <li>The file was trimmed or had frames added after encoding, without updating the header</li>
+                <li>The encoder calculated the frame count incorrectly</li>
+                <li>An incomplete download that left the Xing header intact but removed trailing audio frames</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>Use a VBR header repair tool (e.g. VBRfix or mp3val) to recalculate the correct count</li>
+                <li>Re-encode to generate a fresh header</li>
             </ul>
             """
         ),
         ["INFO_FRAME_COUNT_MISMATCH"] = new(
-            "Info Frame Count Mismatch",
-            "The Info header (CBR equivalent of Xing) declares a frame count that does not match "
-                + "the actual number of audio frames. This is the same issue as Xing mismatch "
-                + "but for constant bitrate files.",
-            "The file's navigation index is incorrect. The audio plays fine but the displayed "
-                + "duration or seek positions may be slightly off.",
-            """
+            Title: "Info Frame Count Mismatch",
+            Technical: "The Info header (CBR equivalent of the Xing header) stores a frame count "
+                + "for constant bitrate files. The stored count does not match the actual number "
+                + "of audio frames (tolerance of +/- 1).",
+            Simple: "The file's navigation index is wrong. The audio plays correctly "
+                + "but the displayed duration or seek positions may be slightly off.",
+            Causes: """
             <ul>
-                <li>Re-encode to regenerate a correct header</li>
-                <li>Use <kbd>mp3val</kbd> to repair the header</li>
-                <li>No impact on audio quality</li>
+                <li>The file was trimmed or modified after encoding without updating the Info header</li>
+                <li>The encoder miscalculated the frame count</li>
+                <li>Partial download that preserved the header but lost trailing frames</li>
+            </ul>
+            """,
+            Fix: """
+            <ul>
+                <li>Use mp3val to recalculate the header</li>
+                <li>Re-encode the file to generate a correct header</li>
             </ul>
             """
         ),
         ["LAME_TAG_CRC_MISMATCH"] = new(
-            "LAME Tag CRC Mismatch",
-            "The LAME encoder tag embedded in the first frame contains a CRC that does not match "
-                + "the tag data. The LAME tag stores encoder settings, replay gain values, "
-                + "and gapless playback information.",
-            "The encoder metadata is corrupted. The audio itself is not affected, but features "
-                + "that depend on the LAME tag (like gapless playback or replay gain) may not work correctly.",
-            """
+            Title: "LAME Tag CRC Mismatch",
+            Technical: "The LAME encoder embeds a metadata block inside the first audio frame, "
+                + "after the Xing/Info header. This block stores encoder settings, "
+                + "replay gain values, and gapless playback offsets. "
+                + "A CRC protects this metadata area. "
+                + "The stored CRC does not match the recomputed value.",
+            Simple: "The encoder metadata is corrupted. The audio is not affected, "
+                + "but features that rely on the LAME tag (gapless playback, replay gain) "
+                + "may not work correctly.",
+            Causes: """
+            <ul>
+                <li>A tag editor or audio tool overwrote part of the first frame where the LAME tag lives</li>
+                <li>Corruption at the beginning of the file</li>
+                <li>A conversion tool re-wrote the Xing/Info header without preserving the LAME tag CRC</li>
+            </ul>
+            """,
+            Fix: """
             <ul>
                 <li>Usually harmless for regular playback</li>
-                <li>Re-encode if you need accurate replay gain or gapless playback</li>
-                <li>This often happens when the file has been modified by a tag editor that overwrites the LAME tag area</li>
+                <li>Re-encode from the original source if you need accurate replay gain or gapless playback</li>
             </ul>
             """
         ),
