@@ -93,7 +93,7 @@ public sealed class MainForm : Form
     {
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
         Text = $"Audio Integrity Checker — {v.Major}.{v.Minor}.{v.Build}";
-        MinimumSize = new Size(900, 560);
+        MinimumSize = new Size(900, 580);
         Size = new Size(1080, 640);
         StartPosition = FormStartPosition.CenterScreen;
 
@@ -164,10 +164,12 @@ public sealed class MainForm : Form
         var listPanel = new Panel { Dock = DockStyle.Fill };
         listPanel.Controls.Add(listBorderPanel);
 
+        var helpBackColor = Color.FromArgb(245, 245, 245);
         _htmlPanel = new HtmlPanel
         {
             Dock = DockStyle.Fill,
             AutoScroll = true,
+            BackColor = helpBackColor,
             Text = HelpContent.GetWelcomeHtml(),
         };
 
@@ -177,7 +179,7 @@ public sealed class MainForm : Form
             Padding = new Padding(0, 1, 1, 1), // no left, top, right, bottom
             BackColor = SystemColors.ControlDark,
         };
-        var helpInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
+        var helpInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = helpBackColor };
         helpInnerPanel.Controls.Add(_htmlPanel);
         helpBorderPanel.Controls.Add(helpInnerPanel);
 
@@ -810,10 +812,27 @@ public sealed class MainForm : Form
         }
 
         var item = _listView.SelectedItems[0];
+        var resultText = item.SubItems[ColResult].Text;
+
+        // Not yet analyzed
+        if (resultText is "" or "Pending..." || resultText.EndsWith('%'))
+        {
+            _htmlPanel.Text = HelpContent.GetPendingHtml();
+            return;
+        }
+
         var errorText = item.SubItems[ColError].Text;
+
+        // Extract positional info from the message column (e.g. "@ 00:12:34.567  [frame 123]")
+        string? positionalInfo = null;
+        var messageText = item.SubItems[ColMessage].Text;
+        int atIndex = messageText.IndexOf("  @", StringComparison.Ordinal);
+        if (atIndex >= 0)
+            positionalInfo = messageText[(atIndex + 2)..].Trim();
+
         _htmlPanel.Text = string.IsNullOrEmpty(errorText)
-            ? HelpContent.GetHtml(null)
-            : HelpContent.GetHtml(errorText);
+            ? HelpContent.GetHtml(null, null)
+            : HelpContent.GetHtml(errorText, positionalInfo);
     }
 
     private void SetAnalysing(bool active)
