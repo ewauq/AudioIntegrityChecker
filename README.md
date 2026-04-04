@@ -2,7 +2,7 @@
 
 A Windows utility for verifying the integrity of audio files.
 
-Just drop a folder or files, click **Start scan**, and get a clear report of every corrupt or structurally broken file.
+Just drop a folder or files, click **Start scan**, and get a clear report of every corrupt or structurally broken file. A built-in help panel explains each diagnostic in plain language and suggests how to fix it.
 
 ![Screenshot](https://i.imgur.com/2HVeFFt.png)
 

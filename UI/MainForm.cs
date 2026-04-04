@@ -8,6 +8,7 @@ using AudioIntegrityChecker.Checkers.Flac;
 using AudioIntegrityChecker.Checkers.Mp3;
 using AudioIntegrityChecker.Core;
 using AudioIntegrityChecker.Pipeline;
+using TheArtOfDev.HtmlRenderer.WinForms;
 
 namespace AudioIntegrityChecker.UI;
 
@@ -32,7 +33,7 @@ public sealed class MainForm : Form
     private int _sortColumn = -1;
     private bool _sortAscending = true;
 
-    private readonly ListView _listView;
+    private readonly BufferedListView _listView;
     private readonly ProgressBar _globalBar;
     private readonly Panel _globalBarWrapper;
     private readonly Button _startButton;
@@ -48,6 +49,10 @@ public sealed class MainForm : Form
     private readonly ToolStripSeparator _sepSize;
     private readonly ToolStripSeparator _sepDuration;
     private readonly System.Windows.Forms.Timer _ramTimer;
+    private readonly SplitContainer _splitContainer;
+    private readonly HtmlPanel _htmlPanel;
+    private readonly MenuStrip _menuStrip;
+    private readonly ToolStripMenuItem _menuViewHelpPanel;
 
     private int _countOk;
     private int _countMetadata;
@@ -81,13 +86,14 @@ public sealed class MainForm : Form
     private const int ColMessageWidth = 420;
     private const int ColErrorWidth = 200;
 
+    private const int HelpPanelWidth = 300;
     private const int RamUpdateIntervalMs = 1_000; // 1 s refresh for the RAM indicator in the status bar
 
     public MainForm()
     {
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
         Text = $"Audio Integrity Checker — {v.Major}.{v.Minor}.{v.Build}";
-        MinimumSize = new Size(900, 560);
+        MinimumSize = new Size(900, 580);
         Size = new Size(1080, 640);
         StartPosition = FormStartPosition.CenterScreen;
 
@@ -100,6 +106,7 @@ public sealed class MainForm : Form
             FullRowSelect = true,
             GridLines = false,
             OwnerDraw = true,
+            BorderStyle = BorderStyle.None,
         };
         _listView.Columns.Add("Directory", ColDirWidth);
         _listView.Columns.Add("File", ColFileWidth);
@@ -144,8 +151,37 @@ public sealed class MainForm : Form
         _listView.DrawItem += (_, _) => { };
         _listView.DrawSubItem += OnDrawSubItem;
 
-        var listPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(6) };
-        listPanel.Controls.Add(_listView);
+        var listBorderPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(1, 1, 0, 1), // left, top, no right, bottom
+            BackColor = SystemColors.ControlDark,
+        };
+        var listInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
+        listInnerPanel.Controls.Add(_listView);
+        listBorderPanel.Controls.Add(listInnerPanel);
+
+        var listPanel = new Panel { Dock = DockStyle.Fill };
+        listPanel.Controls.Add(listBorderPanel);
+
+        var helpBackColor = Color.FromArgb(245, 245, 245);
+        _htmlPanel = new HtmlPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            BackColor = helpBackColor,
+            Text = HelpContent.GetWelcomeHtml(),
+        };
+
+        var helpBorderPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(0, 1, 1, 1), // no left, top, right, bottom
+            BackColor = SystemColors.ControlDark,
+        };
+        var helpInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = helpBackColor };
+        helpInnerPanel.Controls.Add(_htmlPanel);
+        helpBorderPanel.Controls.Add(helpInnerPanel);
 
         _bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = ButtonRowHeight };
 
@@ -155,7 +191,7 @@ public sealed class MainForm : Form
             Width = 90,
             Height = 26,
             Enabled = false,
-            Margin = new Padding(1, 0, 4, 0),
+            Margin = new Padding(0, 0, 4, 0),
         };
         _cancelButton = new Button
         {
@@ -167,23 +203,40 @@ public sealed class MainForm : Form
         };
         _statusLabel = new Label
         {
-            Text = "Drop audio files into the window and click Start scan.",
+            Text = "",
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
             Width = 600,
             Height = 26,
         };
 
+        _statusLabel.Margin = new Padding(4, 0, 0, 0);
+
         var buttonRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
             Height = ButtonRowHeight,
-            Padding = new Padding(4, 4, 4, 0),
+            Padding = new Padding(6),
             FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
         };
         buttonRow.Controls.Add(_startButton);
         buttonRow.Controls.Add(_cancelButton);
         buttonRow.Controls.Add(_statusLabel);
+
+        // Left content area: list + buttons + progress bar
+        var leftPanel = new Panel { Dock = DockStyle.Fill };
+
+        _splitContainer = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Vertical,
+            FixedPanel = FixedPanel.Panel2,
+            SplitterWidth = 1,
+            BackColor = SystemColors.ControlDark,
+        };
+        _splitContainer.Panel1.Controls.Add(listPanel);
+        _splitContainer.Panel2.Controls.Add(helpBorderPanel);
 
         _globalBarWrapper = new Panel
         {
@@ -203,6 +256,40 @@ public sealed class MainForm : Form
 
         _bottomPanel.Controls.Add(_globalBarWrapper);
         _bottomPanel.Controls.Add(buttonRow);
+
+        // ---- Menu strip ----
+        var menuFile = new ToolStripMenuItem("&File");
+        var menuAddFolder = new ToolStripMenuItem("Add folder...", null, OnMenuAddFolder);
+        var menuAddFiles = new ToolStripMenuItem("Add files...", null, OnMenuAddFiles);
+        var menuExit = new ToolStripMenuItem("Exit", null, (_, _) => Close());
+        menuFile.DropDownItems.AddRange([
+            menuAddFolder,
+            menuAddFiles,
+            new ToolStripSeparator(),
+            menuExit,
+        ]);
+
+        var menuView = new ToolStripMenuItem("&View");
+        _menuViewHelpPanel = new ToolStripMenuItem("Show help panel", null, OnMenuToggleHelpPanel)
+        {
+            Checked = true,
+        };
+        var menuAutoResize = new ToolStripMenuItem(
+            "Auto resize columns",
+            null,
+            OnMenuAutoResizeColumns
+        );
+        menuView.DropDownItems.AddRange([
+            _menuViewHelpPanel,
+            new ToolStripSeparator(),
+            menuAutoResize,
+        ]);
+
+        _menuStrip = new MenuStrip();
+        _menuStrip.Items.AddRange([menuFile, menuView]);
+
+        // ---- Column header context menu ----
+        BuildColumnHeaderContextMenu();
 
         _labelFiles = new ToolStripStatusLabel();
         _sepSize = new ToolStripSeparator { Visible = false };
@@ -241,9 +328,11 @@ public sealed class MainForm : Form
             _labelRam.Text = $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}";
         _ramTimer.Start();
 
-        Controls.Add(listPanel);
+        Controls.Add(_splitContainer);
         Controls.Add(_bottomPanel);
+        Controls.Add(_menuStrip);
         Controls.Add(_statusStrip);
+        MainMenuStrip = _menuStrip;
 
         AllowDrop = true;
         DragEnter += OnDragEnter;
@@ -253,6 +342,7 @@ public sealed class MainForm : Form
         _listView.DragDrop += OnDragDrop;
         _startButton.Click += OnStartClick;
         _cancelButton.Click += OnCancelClick;
+        _listView.SelectedIndexChanged += OnSelectedIndexChanged;
 
         RegisterCheckers();
 
@@ -262,12 +352,90 @@ public sealed class MainForm : Form
             $"mpg123: {(Mp3Mpg123Backend.IsLibraryAvailable() ? "available" : "not available")}";
         // Cancel any in-flight work before the form is destroyed so that mpg123
         // worker calls finish before Shutdown() tears down the native library.
-        FormClosing += (_, _) =>
-        {
-            _scanCts?.Cancel();
-            _analysisCts?.Cancel();
-        };
+        FormClosing += OnFormClosing;
         FormClosed += (_, _) => Mp3Mpg123Backend.Shutdown();
+
+        Load += OnFormLoad;
+    }
+
+    private void OnFormLoad(object? sender, EventArgs e)
+    {
+        var prefs = UserPreferences.Load();
+
+        // Restore window size and position
+        if (prefs.WindowWidth > 0 && prefs.WindowHeight > 0)
+            Size = new Size(prefs.WindowWidth, prefs.WindowHeight);
+
+        if (prefs.WindowX != int.MinValue && prefs.WindowY != int.MinValue)
+        {
+            var restored = new Rectangle(prefs.WindowX, prefs.WindowY, Width, Height);
+            bool onScreen = Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(restored));
+            if (onScreen)
+            {
+                StartPosition = FormStartPosition.Manual;
+                Location = new Point(prefs.WindowX, prefs.WindowY);
+            }
+        }
+
+        if (prefs.WindowMaximized)
+            WindowState = FormWindowState.Maximized;
+
+        // Restore help panel state
+        if (prefs.HelpPanelVisible)
+        {
+            _splitContainer.Panel2MinSize = HelpPanelWidth;
+            _splitContainer.SplitterDistance = _splitContainer.Width - HelpPanelWidth;
+        }
+        else
+        {
+            _splitContainer.Panel2Collapsed = true;
+            _menuViewHelpPanel.Checked = false;
+        }
+
+        // Restore hidden columns
+        if (prefs.HiddenColumns.Count > 0)
+        {
+            foreach (int colIndex in prefs.HiddenColumns)
+            {
+                if (colIndex < _listView.Columns.Count)
+                {
+                    _hiddenColumnWidths[colIndex] = _listView.Columns[colIndex].Width;
+                    _listView.Columns[colIndex].Width = 0;
+                }
+            }
+
+            // Sync context menu checkmarks
+            if (_listView.HeaderContextMenuStrip is ContextMenuStrip menu)
+            {
+                foreach (ToolStripMenuItem item in menu.Items)
+                {
+                    if (item.Tag is int idx && prefs.HiddenColumns.Contains(idx))
+                        item.Checked = false;
+                }
+            }
+        }
+    }
+
+    private void OnFormClosing(object? sender, FormClosingEventArgs e)
+    {
+        _scanCts?.Cancel();
+        _analysisCts?.Cancel();
+
+        var prefs = new UserPreferences
+        {
+            WindowMaximized = WindowState == FormWindowState.Maximized,
+            HelpPanelVisible = !_splitContainer.Panel2Collapsed,
+            HiddenColumns = new HashSet<int>(_hiddenColumnWidths.Keys),
+        };
+
+        // Save normal (non-maximized) bounds
+        var restoreBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+        prefs.WindowX = restoreBounds.X;
+        prefs.WindowY = restoreBounds.Y;
+        prefs.WindowWidth = restoreBounds.Width;
+        prefs.WindowHeight = restoreBounds.Height;
+
+        prefs.Save();
     }
 
     private void RegisterCheckers()
@@ -301,7 +469,11 @@ public sealed class MainForm : Form
     {
         if (e.Data?.GetData(DataFormats.FileDrop) is not string[] droppedPaths)
             return;
+        LoadPaths(droppedPaths);
+    }
 
+    private void LoadPaths(string[] paths)
+    {
         _scanCts?.Cancel();
         _scanCts?.Dispose();
         _scanCts = new CancellationTokenSource();
@@ -315,7 +487,7 @@ public sealed class MainForm : Form
         SetAnalysing(false);
         SetStatus("Scanning…");
 
-        _ = ScanAsync(droppedPaths, _scanCts.Token);
+        _ = ScanAsync(paths, _scanCts.Token);
     }
 
     private async Task ScanAsync(string[] droppedPaths, CancellationToken cancellationToken)
@@ -391,6 +563,7 @@ public sealed class MainForm : Form
         SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
         UpdateStatusBar();
+        UpdateHelpPanel();
         SetAnalysing(false);
     }
 
@@ -500,9 +673,166 @@ public sealed class MainForm : Form
         _countError = 0;
 
         UpdateStatusBar();
-        SetStatus("Drop audio files into the window and click Start scan.");
+        UpdateHelpPanel();
+        SetStatus("");
         SetAnalysing(false);
         TrimWorkingSet();
+    }
+
+    private void OnMenuToggleHelpPanel(object? sender, EventArgs e)
+    {
+        bool opening = _splitContainer.Panel2Collapsed;
+        if (opening)
+        {
+            _splitContainer.Panel2Collapsed = false;
+            _splitContainer.Panel2MinSize = HelpPanelWidth;
+            _splitContainer.SplitterDistance = _splitContainer.Width - HelpPanelWidth;
+            UpdateHelpPanel();
+        }
+        else
+        {
+            _splitContainer.Panel2MinSize = 0;
+            _splitContainer.Panel2Collapsed = true;
+        }
+
+        _menuViewHelpPanel.Checked = opening;
+    }
+
+    private void OnMenuAddFolder(object? sender, EventArgs e)
+    {
+        using var dialog = new FolderBrowserDialog { Description = "Select a folder to scan" };
+        if (dialog.ShowDialog() == DialogResult.OK)
+            LoadPaths([dialog.SelectedPath]);
+    }
+
+    private void OnMenuAddFiles(object? sender, EventArgs e)
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Select audio files",
+            Filter = "Audio files|*.flac;*.mp3|All files|*.*",
+            Multiselect = true,
+        };
+        if (dialog.ShowDialog() == DialogResult.OK)
+            LoadPaths(dialog.FileNames);
+    }
+
+    private void OnMenuAutoResizeColumns(object? sender, EventArgs e)
+    {
+        _listView.AutoResizeColumns(ColumnHeaderAutoResizeStyle.ColumnContent);
+    }
+
+    // -------------------------------------------------------------------------
+    // Column header context menu — show/hide optional columns
+    // -------------------------------------------------------------------------
+
+    // Columns that can be hidden; maps column index → saved width before hiding
+    private readonly Dictionary<int, int> _hiddenColumnWidths = [];
+
+    private static readonly (int Index, string Name, bool Optional)[] ColumnDefs =
+    [
+        (0, "Directory", true),
+        (1, "File", false),
+        (ColDuration, "Duration", true),
+        (ColFormat, "Format", true),
+        (ColResult, "Result", false),
+        (ColSeverity, "Severity", true),
+        (ColMessage, "Message", false),
+        (ColError, "Error", true),
+    ];
+
+    private void BuildColumnHeaderContextMenu()
+    {
+        var contextMenu = new ContextMenuStrip();
+        foreach (var (index, name, optional) in ColumnDefs)
+        {
+            if (!optional)
+                continue;
+            var menuItem = new ToolStripMenuItem(name)
+            {
+                Tag = index,
+                Checked = true,
+                CheckOnClick = true,
+            };
+            menuItem.CheckedChanged += OnColumnVisibilityChanged;
+            contextMenu.Items.Add(menuItem);
+        }
+
+        _listView.ColumnWidthChanging += (_, args) =>
+        {
+            if (_hiddenColumnWidths.ContainsKey(args.ColumnIndex))
+            {
+                args.Cancel = true;
+                args.NewWidth = 0;
+            }
+        };
+
+        _listView.HeaderContextMenuStrip = contextMenu;
+    }
+
+    private void OnColumnVisibilityChanged(object? sender, EventArgs e)
+    {
+        if (sender is not ToolStripMenuItem menuItem || menuItem.Tag is not int colIndex)
+            return;
+
+        if (menuItem.Checked)
+        {
+            // Restore column
+            if (_hiddenColumnWidths.TryGetValue(colIndex, out int savedWidth))
+            {
+                _listView.Columns[colIndex].Width = savedWidth;
+                _hiddenColumnWidths.Remove(colIndex);
+            }
+        }
+        else
+        {
+            // Hide column
+            _hiddenColumnWidths[colIndex] = _listView.Columns[colIndex].Width;
+            _listView.Columns[colIndex].Width = 0;
+        }
+    }
+
+    private void OnSelectedIndexChanged(object? sender, EventArgs e) => UpdateHelpPanel();
+
+    private void UpdateHelpPanel()
+    {
+        if (_splitContainer.Panel2Collapsed)
+            return;
+
+        if (_listView.Items.Count == 0)
+        {
+            _htmlPanel.Text = HelpContent.GetWelcomeHtml();
+            return;
+        }
+
+        if (_listView.SelectedItems.Count == 0)
+        {
+            _htmlPanel.Text = HelpContent.GetSelectFileHtml();
+            return;
+        }
+
+        var item = _listView.SelectedItems[0];
+        var resultText = item.SubItems[ColResult].Text;
+
+        // Not yet analyzed
+        if (resultText is "" or "Pending..." || resultText.EndsWith('%'))
+        {
+            _htmlPanel.Text = HelpContent.GetPendingHtml();
+            return;
+        }
+
+        var errorText = item.SubItems[ColError].Text;
+
+        // Extract positional info from the message column (e.g. "@ 00:12:34.567  [frame 123]")
+        string? positionalInfo = null;
+        var messageText = item.SubItems[ColMessage].Text;
+        int atIndex = messageText.IndexOf("  @", StringComparison.Ordinal);
+        if (atIndex >= 0)
+            positionalInfo = messageText[(atIndex + 2)..].Trim();
+
+        _htmlPanel.Text = string.IsNullOrEmpty(errorText)
+            ? HelpContent.GetHtml(null, null)
+            : HelpContent.GetHtml(errorText, positionalInfo);
     }
 
     private void SetAnalysing(bool active)
