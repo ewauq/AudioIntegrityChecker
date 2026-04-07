@@ -1,12 +1,14 @@
-using AudioIntegrityChecker.Checkers.Flac;
-using AudioIntegrityChecker.Checkers.Mp3;
-
 namespace AudioIntegrityChecker.Pipeline;
 
 /// <summary>
 /// Scans a set of file/directory paths and returns <see cref="FileEntry"/> records
 /// for all supported audio files found, filtering out unsupported formats.
 /// Runs on a thread-pool thread — no UI access.
+///
+/// Duration is deliberately NOT read here: opening each file a second time just to
+/// peek at metadata is extremely expensive on spinning disks. The duration is
+/// instead extracted by the checker during analysis, when the file is already
+/// loaded into memory.
 /// </summary>
 internal static class FileCollector
 {
@@ -45,26 +47,9 @@ internal static class FileCollector
             }
             catch { }
 
-            TimeSpan? duration = extension switch
-            {
-                "flac" => FlacMetadataReader.TryReadStreamInfo(filePath) is var (ts, sr)
-                && ts > 0
-                && sr > 0
-                    ? TimeSpan.FromSeconds((double)ts / sr)
-                    : null,
-                "mp3" => Mp3MetadataReader.TryReadDuration(filePath),
-                _ => null,
-            };
-
             var directoryName = Path.GetFileName(Path.GetDirectoryName(filePath)) ?? string.Empty;
             entries.Add(
-                new FileEntry(
-                    filePath,
-                    directoryName,
-                    extension.ToUpperInvariant(),
-                    bytes,
-                    duration
-                )
+                new FileEntry(filePath, directoryName, extension.ToUpperInvariant(), bytes)
             );
         }
 
@@ -88,11 +73,5 @@ internal static class FileCollector
     }
 }
 
-/// <summary>Snapshot of a queued audio file with its pre-read metadata.</summary>
-internal record FileEntry(
-    string FilePath,
-    string DirectoryName,
-    string Format,
-    long Bytes,
-    TimeSpan? Duration
-);
+/// <summary>Snapshot of a queued audio file. Duration is populated later by the checker.</summary>
+internal record FileEntry(string FilePath, string DirectoryName, string Format, long Bytes);
