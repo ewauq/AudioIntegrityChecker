@@ -156,17 +156,23 @@ public sealed class NativeFlacChecker : IFormatChecker
         public bool Cancelled;
     }
 
-    public CheckResult Check(
+    public CheckOutcome Check(
         string filePath,
         CancellationToken cancellationToken,
         IProgress<FileProgress> progress
     )
     {
         if (!File.Exists(filePath))
-            return CheckResult.Error("File not found.", CheckCategory.Error);
+            return new CheckOutcome(
+                CheckResult.Error("File not found.", CheckCategory.Error),
+                null
+            );
 
         if (!IsLibraryAvailable())
-            return CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error);
+            return new CheckOutcome(
+                CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error),
+                null
+            );
 
         byte[] fileBuffer;
         try
@@ -175,16 +181,27 @@ public sealed class NativeFlacChecker : IFormatChecker
         }
         catch (OutOfMemoryException)
         {
-            return CheckResult.Error("File too large to load into memory.", CheckCategory.Error);
+            return new CheckOutcome(
+                CheckResult.Error("File too large to load into memory.", CheckCategory.Error),
+                null
+            );
         }
         catch (Exception ex)
         {
-            return CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error);
+            return new CheckOutcome(
+                CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error),
+                null
+            );
         }
 
-        // Pre-read STREAMINFO from the buffer — used for progress and timecode.
-        // This avoids needing a metadata callback during decode.
+        // Pre-read STREAMINFO from the buffer — used for progress, timecode, and duration.
+        // This avoids needing a metadata callback during decode, and saves a second disk
+        // round-trip that would otherwise be required during the scan phase.
         var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(fileBuffer);
+        TimeSpan? duration =
+            totalSamples > 0 && sampleRate > 0
+                ? TimeSpan.FromSeconds((double)totalSamples / sampleRate)
+                : null;
 
         var state = new DecodeState
         {
@@ -202,7 +219,10 @@ public sealed class NativeFlacChecker : IFormatChecker
         {
             decoder = FLAC__stream_decoder_new();
             if (decoder == IntPtr.Zero)
-                return CheckResult.Error("Failed to allocate FLAC decoder.", CheckCategory.Error);
+                return new CheckOutcome(
+                    CheckResult.Error("Failed to allocate FLAC decoder.", CheckCategory.Error),
+                    duration
+                );
 
             // Suppress all metadata callbacks — we pre-read what we need.
             FLAC__stream_decoder_set_metadata_ignore_all(decoder);
@@ -232,16 +252,22 @@ public sealed class NativeFlacChecker : IFormatChecker
             );
 
             if (initStatus != 0)
-                return CheckResult.Error(
-                    $"FLAC decoder init failed (status {initStatus}).",
-                    CheckCategory.Error
+                return new CheckOutcome(
+                    CheckResult.Error(
+                        $"FLAC decoder init failed (status {initStatus}).",
+                        CheckCategory.Error
+                    ),
+                    duration
                 );
 
             bool decodeSucceeded = FLAC__stream_decoder_process_until_end_of_stream(decoder);
             FLAC__stream_decoder_finish(decoder);
 
             if (state.Cancelled)
-                return CheckResult.Error("Cancelled.", CheckCategory.Error);
+                return new CheckOutcome(
+                    CheckResult.Error("Cancelled.", CheckCategory.Error),
+                    duration
+                );
 
             if (state.HasError)
             {
@@ -268,18 +294,28 @@ public sealed class NativeFlacChecker : IFormatChecker
                     ? CheckCategory.Structure
                     : CheckCategory.Corruption;
 
-                return state.ErrorIsWarning || isTrailingGarbage
-                    ? CheckResult.Warning(message, category, timecode, (long)state.ErrorAtSample)
-                    : CheckResult.Error(message, category, timecode, (long)state.ErrorAtSample);
+                var errorResult =
+                    state.ErrorIsWarning || isTrailingGarbage
+                        ? CheckResult.Warning(
+                            message,
+                            category,
+                            timecode,
+                            (long)state.ErrorAtSample
+                        )
+                        : CheckResult.Error(message, category, timecode, (long)state.ErrorAtSample);
+                return new CheckOutcome(errorResult, duration);
             }
 
             if (!decodeSucceeded)
-                return CheckResult.Error(
-                    "Decoder did not reach end of stream cleanly.",
-                    CheckCategory.Corruption
+                return new CheckOutcome(
+                    CheckResult.Error(
+                        "Decoder did not reach end of stream cleanly.",
+                        CheckCategory.Corruption
+                    ),
+                    duration
                 );
 
-            return CheckResult.Ok();
+            return new CheckOutcome(CheckResult.Ok(), duration);
         }
         finally
         {

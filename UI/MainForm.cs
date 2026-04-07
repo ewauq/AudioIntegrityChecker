@@ -542,7 +542,9 @@ public sealed class MainForm : Form
                 UseItemStyleForSubItems = false,
             };
             item.SubItems.Add(Path.GetFileName(entry.FilePath));
-            item.SubItems.Add(FormatTrackDuration(entry.Duration));
+            // Duration is populated later by the checker (see OnFileCompleted) — scanning
+            // no longer opens each file a second time to peek at metadata.
+            item.SubItems.Add("");
             item.SubItems.Add(format);
             item.SubItems.Add(""); // Result
             item.SubItems.Add(""); // Severity
@@ -552,8 +554,6 @@ public sealed class MainForm : Form
             _queuedFiles.Add(entry.FilePath);
             _itemByPath[entry.FilePath] = item;
             _totalBytes += entry.Bytes;
-            if (entry.Duration.HasValue)
-                _totalDuration += entry.Duration.Value;
 
             _listView.Items.Add(item);
         }
@@ -581,6 +581,9 @@ public sealed class MainForm : Form
         _countError = 0;
         _totalFiles = _queuedFiles.Count;
         _completedFiles = 0;
+        // Duration is reaccumulated by OnFileCompleted as each checker reports it.
+        _totalDuration = TimeSpan.Zero;
+        UpdateStatusBar();
 
         foreach (ListViewItem item in _listView.Items)
         {
@@ -880,12 +883,22 @@ public sealed class MainForm : Form
             var severity = ResultFormatting.GetSeverity(result.Category);
             var color = ResultFormatting.GetSeverityColor(severity);
 
+            // Duration is now extracted by the checker (from the in-memory buffer it
+            // already loaded), so we populate the column and total here — after scan.
+            if (args.Duration.HasValue)
+            {
+                item.SubItems[ColDuration].Text = FormatTrackDuration(args.Duration);
+                _totalDuration += args.Duration.Value;
+            }
+
             item.SubItems[ColResult].Text = isOk ? "OK" : "ISSUE";
             item.SubItems[ColSeverity].Text =
                 severity == ResultSeverity.None ? "" : severity.ToString();
             item.SubItems[ColSeverity].ForeColor = color;
             item.SubItems[ColMessage].Text = ResultFormatting.BuildMessageColumnText(result);
             item.SubItems[ColError].Text = result.ErrorMessage ?? string.Empty;
+
+            UpdateStatusBar();
 
             // Stop updating the status label once all files are accounted for —
             // the await continuation will overwrite it with the final summary.

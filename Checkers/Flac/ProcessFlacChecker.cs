@@ -25,23 +25,37 @@ public sealed class ProcessFlacChecker : IFormatChecker
         RegexOptions.Compiled | RegexOptions.IgnoreCase
     );
 
-    public CheckResult Check(
+    public CheckOutcome Check(
         string filePath,
         CancellationToken cancellationToken,
         IProgress<FileProgress> progress
     )
     {
         if (!File.Exists(filePath))
-            return CheckResult.Error("File not found.", CheckCategory.Error);
-
-        if (!ToolAvailable(FlacExecutable))
-            return CheckResult.Error(
-                $"{FlacExecutable} not found in PATH or application directory.",
-                CheckCategory.Error
+            return new CheckOutcome(
+                CheckResult.Error("File not found.", CheckCategory.Error),
+                null
             );
 
-        var (_, sampleRate) = FlacMetadataReader.TryReadStreamInfo(filePath);
-        return RunFlacTest(filePath, sampleRate, cancellationToken, progress);
+        if (!ToolAvailable(FlacExecutable))
+            return new CheckOutcome(
+                CheckResult.Error(
+                    $"{FlacExecutable} not found in PATH or application directory.",
+                    CheckCategory.Error
+                ),
+                null
+            );
+
+        // Read STREAMINFO once — used both for timecode conversion and to expose the
+        // track duration to the UI (which no longer reads it during the scan phase).
+        var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(filePath);
+        TimeSpan? duration =
+            totalSamples > 0 && sampleRate > 0
+                ? TimeSpan.FromSeconds((double)totalSamples / sampleRate)
+                : null;
+
+        var result = RunFlacTest(filePath, sampleRate, cancellationToken, progress);
+        return new CheckOutcome(result, duration);
     }
 
     private static CheckResult RunFlacTest(

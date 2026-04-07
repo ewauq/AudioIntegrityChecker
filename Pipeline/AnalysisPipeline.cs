@@ -41,11 +41,16 @@ public sealed class AnalysisPipeline
                     {
                         try
                         {
-                            var (result, format) = CheckFile(capturedPath, cancellationToken);
+                            var (outcome, format) = CheckFile(capturedPath, cancellationToken);
                             int count = Interlocked.Increment(ref completedCount);
                             globalProgress?.Report(count);
                             FileCompleted?.Invoke(
-                                new FileCompletedEventArgs(capturedPath, format, result)
+                                new FileCompletedEventArgs(
+                                    capturedPath,
+                                    format,
+                                    outcome.Result,
+                                    outcome.Duration
+                                )
                             );
                         }
                         finally
@@ -61,7 +66,7 @@ public sealed class AnalysisPipeline
         await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
-    private (CheckResult Result, string Format) CheckFile(
+    private (CheckOutcome Outcome, string Format) CheckFile(
         string filePath,
         CancellationToken cancellationToken
     )
@@ -72,7 +77,10 @@ public sealed class AnalysisPipeline
             // Should not happen — unsupported files are filtered out before queuing.
             var extension = Path.GetExtension(filePath).TrimStart('.');
             return (
-                CheckResult.Error($"Unrecognized format: .{extension}", CheckCategory.Error),
+                new CheckOutcome(
+                    CheckResult.Error($"Unrecognized format: .{extension}", CheckCategory.Error),
+                    null
+                ),
                 extension.ToUpperInvariant()
             );
         }
@@ -81,8 +89,8 @@ public sealed class AnalysisPipeline
             FileProgressChanged?.Invoke(new FileProgressEventArgs(filePath, fileProgress))
         );
 
-        var result = checker.Check(filePath, cancellationToken, progress);
-        return (result, checker.FormatId);
+        var outcome = checker.Check(filePath, cancellationToken, progress);
+        return (outcome, checker.FormatId);
     }
 }
 
@@ -91,12 +99,19 @@ public sealed class FileCompletedEventArgs : EventArgs
     public string FilePath { get; }
     public string Format { get; }
     public CheckResult Result { get; }
+    public TimeSpan? Duration { get; }
 
-    public FileCompletedEventArgs(string filePath, string format, CheckResult result)
+    public FileCompletedEventArgs(
+        string filePath,
+        string format,
+        CheckResult result,
+        TimeSpan? duration
+    )
     {
         FilePath = filePath;
         Format = format;
         Result = result;
+        Duration = duration;
     }
 }
 
