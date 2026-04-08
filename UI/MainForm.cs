@@ -28,6 +28,7 @@ public sealed class MainForm : Form
     private int _completedFiles;
     private long _totalBytes;
     private TimeSpan _totalDuration;
+    private readonly Stopwatch _analysisStopwatch = new();
 
     private bool _isAnalysing;
     private int _sortColumn = -1;
@@ -608,29 +609,29 @@ public sealed class MainForm : Form
             BeginInvoke(() => _globalBar.Value = Math.Min(completedCount, _totalFiles))
         );
 
-        var stopwatch = Stopwatch.StartNew();
+        _analysisStopwatch.Restart();
         try
         {
             await _pipeline.RunAsync(_queuedFiles, _analysisCts.Token, globalProgress);
-            stopwatch.Stop();
+            _analysisStopwatch.Stop();
 
             string timeText =
-                stopwatch.Elapsed.TotalSeconds < 60 // format as "Xs" if under a minute, otherwise "Xm YYs"
-                    ? $"{stopwatch.Elapsed.TotalSeconds:F1}s"
-                    : $"{(int)stopwatch.Elapsed.TotalMinutes}m {stopwatch.Elapsed.Seconds:D2}s";
+                _analysisStopwatch.Elapsed.TotalSeconds < 60 // format as "Xs" if under a minute, otherwise "Xm YYs"
+                    ? $"{_analysisStopwatch.Elapsed.TotalSeconds:F1}s"
+                    : $"{(int)_analysisStopwatch.Elapsed.TotalMinutes}m {_analysisStopwatch.Elapsed.Seconds:D2}s";
             int n = _completedFiles;
             SetStatus($"Processed {(n == 1 ? "1 file" : $"{n} files")} in {timeText}.");
 
-            ShowCompletionDialog(stopwatch.Elapsed);
+            ShowCompletionDialog(_analysisStopwatch.Elapsed);
         }
         catch (OperationCanceledException)
         {
-            stopwatch.Stop();
+            _analysisStopwatch.Stop();
             SetStatus("Cancelled.");
         }
         catch (Exception ex)
         {
-            stopwatch.Stop();
+            _analysisStopwatch.Stop();
             SetStatus($"Pipeline error: {ex.Message}");
         }
         finally
@@ -903,7 +904,7 @@ public sealed class MainForm : Form
             // Stop updating the status label once all files are accounted for —
             // the await continuation will overwrite it with the final summary.
             if (completed < _totalFiles)
-                SetStatus($"Processing: {completed}/{_totalFiles}");
+                SetStatus(BuildProgressStatus(completed));
         });
     }
 
@@ -1081,6 +1082,20 @@ public sealed class MainForm : Form
         if (duration.TotalMinutes >= 1)
             return $"{(int)duration.TotalMinutes}m {duration.Seconds:D2}s";
         return $"{duration.Seconds}s";
+    }
+
+    private string BuildProgressStatus(int completed)
+    {
+        var elapsed = _analysisStopwatch.Elapsed;
+        // Need a few completed files AND ~1s of data before the rate is stable
+        // enough to extrapolate — otherwise the ETA jumps around wildly.
+        if (completed < 3 || elapsed.TotalSeconds < 1.0)
+            return $"Processing: {completed}/{_totalFiles} — Estimating…";
+
+        double rate = completed / elapsed.TotalSeconds;
+        double remainingSeconds = (_totalFiles - completed) / rate;
+        var remaining = TimeSpan.FromSeconds(remainingSeconds);
+        return $"Processing: {completed}/{_totalFiles} — ~{FormatDuration(remaining)} remaining";
     }
 
     private static string FormatBytes(long bytes)
