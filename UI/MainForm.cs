@@ -30,6 +30,7 @@ public sealed class MainForm : Form
     private TimeSpan _totalDuration;
     private TimeSpan _totalScannedDuration;
     private readonly Dictionary<string, long> _fileSizes = new(StringComparer.OrdinalIgnoreCase);
+    private long _processedBytes;
     private readonly Stopwatch _analysisStopwatch = new();
 
     private enum AnalysisState
@@ -506,6 +507,7 @@ public sealed class MainForm : Form
         _totalDuration = TimeSpan.Zero;
         _totalScannedDuration = TimeSpan.Zero;
         _fileSizes.Clear();
+        _processedBytes = 0;
 
         SetAnalysisState(AnalysisState.Idle);
         SetStatus("Scanning…");
@@ -705,6 +707,7 @@ public sealed class MainForm : Form
         _totalFiles = _queuedFiles.Count;
         _completedFiles = 0;
         _startedFiles = 0;
+        _processedBytes = 0;
         // Duration is reaccumulated by OnFileCompleted as each checker reports it.
         _totalDuration = TimeSpan.Zero;
         UpdateStatusBar();
@@ -845,6 +848,7 @@ public sealed class MainForm : Form
         _totalDuration = TimeSpan.Zero;
         _totalScannedDuration = TimeSpan.Zero;
         _fileSizes.Clear();
+        _processedBytes = 0;
         _totalFiles = 0;
         _completedFiles = 0;
         _countOk = 0;
@@ -1042,6 +1046,8 @@ public sealed class MainForm : Form
         // Increment all counters on the worker thread so they are visible to the await
         // continuation via the task memory barrier, no BeginInvoke delay needed.
         int completed = Interlocked.Increment(ref _completedFiles);
+        if (_fileSizes.TryGetValue(args.FilePath, out long fileBytes))
+            Interlocked.Add(ref _processedBytes, fileBytes);
         switch (args.Result.Category)
         {
             case CheckCategory.Ok:
@@ -1304,13 +1310,38 @@ public sealed class MainForm : Form
 
     private string BuildEtaString(TimeSpan elapsed)
     {
-        if (elapsed.TotalSeconds < 1.0 || _completedFiles < 3)
+        if (elapsed.TotalSeconds < 3.0 || _completedFiles < 5)
             return "--:--:--";
-        double rate = _completedFiles / elapsed.TotalSeconds;
-        double remaining = (_totalFiles - _completedFiles) / rate;
-        if (remaining <= 0)
-            return "--:--:--";
-        return TimeSpan.FromSeconds(remaining).ToString(@"hh\:mm\:ss");
+
+        // Priority 1: audio-duration rate — accounts for variable file lengths.
+        double scannedSec = _totalScannedDuration.TotalSeconds;
+        double analyzedSec = _totalDuration.TotalSeconds;
+        if (scannedSec > 0 && analyzedSec > 0)
+        {
+            double rate = analyzedSec / elapsed.TotalSeconds;
+            double remaining = scannedSec - analyzedSec;
+            if (remaining > 0 && rate > 0)
+                return TimeSpan.FromSeconds(remaining / rate).ToString(@"hh\:mm\:ss");
+        }
+
+        // Priority 2: bytes rate.
+        long processed = Interlocked.Read(ref _processedBytes);
+        if (processed > 0 && _totalBytes > processed)
+        {
+            double rate = processed / elapsed.TotalSeconds;
+            return TimeSpan.FromSeconds((_totalBytes - processed) / rate).ToString(@"hh\:mm\:ss");
+        }
+
+        // Priority 3: file count (fallback).
+        if (_completedFiles > 0)
+        {
+            double rate = _completedFiles / elapsed.TotalSeconds;
+            double remaining = (_totalFiles - _completedFiles) / rate;
+            if (remaining > 0)
+                return TimeSpan.FromSeconds(remaining).ToString(@"hh\:mm\:ss");
+        }
+
+        return "--:--:--";
     }
 
     private static string FormatBytes(long bytes)
