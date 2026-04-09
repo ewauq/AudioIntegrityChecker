@@ -9,7 +9,7 @@ namespace AudioIntegrityChecker.Checkers.Flac;
 ///
 /// Strategy:
 ///   1. Load the entire file into a managed byte[] before decoding.
-///      The FLAC decoder reads from that in-memory buffer via callbacks —
+///      The FLAC decoder reads from that in-memory buffer via callbacks,
 ///      zero disk I/O during decode, safe for multithreaded use.
 ///   2. Pre-read STREAMINFO (42 bytes) to obtain total_samples and sample_rate
 ///      before decoder init, so no metadata callback is needed.
@@ -44,7 +44,7 @@ public sealed class NativeFlacChecker : IFormatChecker
         LengthCallback lengthCallback,
         EofCallback eofCallback,
         WriteCallback writeCallback,
-        IntPtr metadataCallback, // always null — ignored via set_metadata_ignore_all
+        IntPtr metadataCallback, // always null, ignored via set_metadata_ignore_all
         ErrorCallback errorCallback,
         IntPtr clientData
     );
@@ -96,7 +96,7 @@ public sealed class NativeFlacChecker : IFormatChecker
     private delegate void ErrorCallback(IntPtr decoder, int status, IntPtr clientData);
 
     // -------------------------------------------------------------------------
-    // FLAC__FrameHeader layout (partial — only fields we read)
+    // FLAC__FrameHeader layout (partial, only fields we read)
     // -------------------------------------------------------------------------
 
     [StructLayout(LayoutKind.Sequential)]
@@ -194,7 +194,7 @@ public sealed class NativeFlacChecker : IFormatChecker
             );
         }
 
-        // Pre-read STREAMINFO from the buffer — used for progress, timecode, and duration.
+        // Pre-read STREAMINFO from the buffer, used for progress, timecode, and duration.
         // This avoids needing a metadata callback during decode, and saves a second disk
         // round-trip that would otherwise be required during the scan phase.
         var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(fileBuffer);
@@ -224,7 +224,7 @@ public sealed class NativeFlacChecker : IFormatChecker
                     duration
                 );
 
-            // Suppress all metadata callbacks — we pre-read what we need.
+            // Suppress all metadata callbacks: we pre-read what we need.
             FLAC__stream_decoder_set_metadata_ignore_all(decoder);
 
             // Keep delegate instances alive for the full duration of decode.
@@ -278,7 +278,7 @@ public sealed class NativeFlacChecker : IFormatChecker
 
                 // LOST_SYNC at or after the STREAMINFO sample count means the decoder
                 // hit non-audio data (an ID3 tag or padding) appended after the last
-                // audio frame — not a mid-stream interruption.
+                // audio frame, not a mid-stream interruption.
                 bool isTrailingGarbage =
                     state.ErrorStatus == 0 // LOST_SYNC
                     && state.TotalSamples > 0

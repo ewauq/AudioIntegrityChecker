@@ -4,7 +4,7 @@ namespace AudioIntegrityChecker.Pipeline;
 
 /// <summary>
 /// Dispatches files to IFormatChecker workers using a SemaphoreSlim-bounded task pool.
-/// Concurrency is capped at min(CPU count, 8) — optimal for CPU-bound FLAC decoding.
+/// Concurrency is capped at min(CPU count, 8), optimal for CPU-bound FLAC decoding.
 /// </summary>
 public sealed class AnalysisPipeline
 {
@@ -74,7 +74,7 @@ public sealed class AnalysisPipeline
         var checker = _registry.Resolve(filePath);
         if (checker is null)
         {
-            // Should not happen — unsupported files are filtered out before queuing.
+            // Should not happen: unsupported files are filtered out before queuing.
             var extension = Path.GetExtension(filePath).TrimStart('.');
             return (
                 new CheckOutcome(

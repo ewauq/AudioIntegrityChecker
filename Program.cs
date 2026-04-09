@@ -29,7 +29,7 @@ internal static class Program
 
     private static List<string> CheckDependencies()
     {
-        var required = new[] { ("libFLAC.dll", "FLAC native decoder — https://xiph.org/flac/") };
+        var required = new[] { ("libFLAC.dll", "FLAC native decoder (https://xiph.org/flac/)") };
 
         var missing = new List<string>();
         foreach (var (file, description) in required)
@@ -42,7 +42,7 @@ internal static class Program
 
     private static bool IsAvailable(string fileName)
     {
-        // Use NativeLibrary.TryLoad — mirrors the exact DLL search order used by P/Invoke
+        // Use NativeLibrary.TryLoad: mirrors the exact DLL search order used by P/Invoke
         // (app dir → System32 → Windows dir → CWD → PATH directories).
         if (System.Runtime.InteropServices.NativeLibrary.TryLoad(fileName, out var handle))
         {

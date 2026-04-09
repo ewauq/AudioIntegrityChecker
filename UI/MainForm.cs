@@ -93,7 +93,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
-        Text = $"Audio Integrity Checker — {v.Major}.{v.Minor}.{v.Build}";
+        Text = $"Audio Integrity Checker v{v.Major}.{v.Minor}.{v.Build}";
         MinimumSize = new Size(900, 580);
         Size = new Size(1080, 640);
         StartPosition = FormStartPosition.CenterScreen;
@@ -298,7 +298,9 @@ public sealed class MainForm : Form
         _sepDuration = new ToolStripSeparator { Visible = false };
         _labelDuration = new ToolStripStatusLabel { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
-        _labelRam = new ToolStripStatusLabel("RAM: —");
+        _labelRam = new ToolStripStatusLabel(
+            $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
+        );
         var sepWorkers = new ToolStripSeparator();
         _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
         _sepDlls = new ToolStripSeparator();
@@ -543,7 +545,7 @@ public sealed class MainForm : Form
                 UseItemStyleForSubItems = false,
             };
             item.SubItems.Add(Path.GetFileName(entry.FilePath));
-            // Duration is populated later by the checker (see OnFileCompleted) — scanning
+            // Duration is populated later by the checker (see OnFileCompleted). Scanning
             // no longer opens each file a second time to peek at metadata.
             item.SubItems.Add("");
             item.SubItems.Add(format);
@@ -727,7 +729,7 @@ public sealed class MainForm : Form
     }
 
     // -------------------------------------------------------------------------
-    // Column header context menu — show/hide optional columns
+    // Column header context menu: show/hide optional columns
     // -------------------------------------------------------------------------
 
     // Columns that can be hidden; maps column index → saved width before hiding
@@ -850,7 +852,7 @@ public sealed class MainForm : Form
     private void OnFileCompleted(FileCompletedEventArgs args)
     {
         // Increment all counters on the worker thread so they are visible to the await
-        // continuation via the task memory barrier — no BeginInvoke delay needed.
+        // continuation via the task memory barrier, no BeginInvoke delay needed.
         int completed = Interlocked.Increment(ref _completedFiles);
         switch (args.Result.Category)
         {
@@ -885,7 +887,7 @@ public sealed class MainForm : Form
             var color = ResultFormatting.GetSeverityColor(severity);
 
             // Duration is now extracted by the checker (from the in-memory buffer it
-            // already loaded), so we populate the column and total here — after scan.
+            // already loaded), so we populate the column and total here (after scan).
             if (args.Duration.HasValue)
             {
                 item.SubItems[ColDuration].Text = FormatTrackDuration(args.Duration);
@@ -901,7 +903,7 @@ public sealed class MainForm : Form
 
             UpdateStatusBar();
 
-            // Stop updating the status label once all files are accounted for —
+            // Stop updating the status label once all files are accounted for;
             // the await continuation will overwrite it with the final summary.
             if (completed < _totalFiles)
                 SetStatus(BuildProgressStatus(completed));
@@ -965,21 +967,21 @@ public sealed class MainForm : Form
         {
             if (_countCorruption > 0)
                 builder.AppendLine(
-                    $"{_countCorruption} CORRUPTION — audio data demonstrably damaged."
+                    $"{_countCorruption} CORRUPTION: audio data demonstrably damaged."
                 );
             if (_countError > 0)
                 builder.AppendLine(
-                    $"{_countError} ERROR — analysis tool failed, file state unknown."
+                    $"{_countError} ERROR: analysis tool failed, file state unknown."
                 );
             if (_countStructure > 0)
                 builder.AppendLine(
-                    $"{_countStructure} STRUCTURE — stream anomaly, audio likely intact."
+                    $"{_countStructure} STRUCTURE: stream anomaly, audio likely intact."
                 );
             if (_countIndex > 0)
-                builder.AppendLine($"{_countIndex} INDEX — seek/frame count mismatch.");
+                builder.AppendLine($"{_countIndex} INDEX: seek/frame count mismatch.");
             if (_countMetadata > 0)
                 builder.Append(
-                    $"{_countMetadata} METADATA — tag inconsistency, no playback impact."
+                    $"{_countMetadata} METADATA: tag inconsistency, no playback impact."
                 );
         }
 
@@ -1038,7 +1040,7 @@ public sealed class MainForm : Form
     }
 
     // -------------------------------------------------------------------------
-    // Memory — trim OS working set after analysis
+    // Memory: trim OS working set after analysis
     // -------------------------------------------------------------------------
 
     [DllImport("kernel32.dll")]
@@ -1088,14 +1090,14 @@ public sealed class MainForm : Form
     {
         var elapsed = _analysisStopwatch.Elapsed;
         // Need a few completed files AND ~1s of data before the rate is stable
-        // enough to extrapolate — otherwise the ETA jumps around wildly.
+        // enough to extrapolate, otherwise the ETA jumps around wildly.
         if (completed < 3 || elapsed.TotalSeconds < 1.0)
-            return $"Processing: {completed}/{_totalFiles} — Estimating…";
+            return $"Processing: {completed}/{_totalFiles} (estimating time...)";
 
         double rate = completed / elapsed.TotalSeconds;
         double remainingSeconds = (_totalFiles - completed) / rate;
         var remaining = TimeSpan.FromSeconds(remainingSeconds);
-        return $"Processing: {completed}/{_totalFiles} — ~{FormatDuration(remaining)} remaining";
+        return $"Processing: {completed}/{_totalFiles} (~{FormatDuration(remaining)} remaining)";
     }
 
     private static string FormatBytes(long bytes)
@@ -1112,7 +1114,7 @@ public sealed class MainForm : Form
     private void SetStatus(string message) => _statusLabel.Text = message;
 
     // -------------------------------------------------------------------------
-    // Ctrl+C — copy selected rows as JSON to clipboard
+    // Ctrl+C: copy selected rows as JSON to clipboard
     // -------------------------------------------------------------------------
 
     private sealed record ClipboardEntry(

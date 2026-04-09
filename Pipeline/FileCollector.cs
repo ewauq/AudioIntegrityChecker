@@ -3,7 +3,7 @@ namespace AudioIntegrityChecker.Pipeline;
 /// <summary>
 /// Scans a set of file/directory paths and returns <see cref="FileEntry"/> records
 /// for all supported audio files found, filtering out unsupported formats.
-/// Runs on a thread-pool thread — no UI access.
+/// Runs on a thread-pool thread, no UI access.
 ///
 /// Duration is deliberately NOT read here: opening each file a second time just to
 /// peek at metadata is extremely expensive on spinning disks. The duration is

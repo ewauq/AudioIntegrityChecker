@@ -8,7 +8,7 @@ namespace AudioIntegrityChecker.Checkers.Mp3;
 /// </summary>
 internal static class Mp3MetadataReader
 {
-    private const int HeaderReadSize = 10_240; // 10 KB — covers ID3v2 + first frame + Xing tag
+    private const int HeaderReadSize = 10_240; // 10 KB: covers ID3v2 + first frame + Xing tag
 
     /// <summary>
     /// Extracts the track duration from an MP3 file already loaded in memory.
