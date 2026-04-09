@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -89,6 +90,11 @@ public sealed class MainForm : Form
     private const int ColError = 7;
 
     private readonly System.Windows.Forms.Timer _progressBarTimer;
+
+    private Image? _iconStart;
+    private Image? _iconPause;
+    private Image? _iconCancel;
+    private Image? _iconClear;
 
     private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 26;
@@ -368,6 +374,23 @@ public sealed class MainForm : Form
 
         RegisterCheckers();
 
+        _iconStart = LoadEmbeddedImage("document_inspector.png");
+        _iconPause = LoadEmbeddedImage("control_pause_blue.png");
+        _iconCancel = LoadEmbeddedImage("cancel.png");
+        _iconClear = LoadEmbeddedImage("cross.png");
+
+        _startButton.Width = 106;
+        _startButton.TextImageRelation = TextImageRelation.ImageBeforeText;
+        _startButton.ImageAlign = ContentAlignment.MiddleLeft;
+        _startButton.TextAlign = ContentAlignment.MiddleRight;
+        _startButton.Image = _iconStart;
+
+        _cancelButton.Width = 96;
+        _cancelButton.TextImageRelation = TextImageRelation.ImageBeforeText;
+        _cancelButton.ImageAlign = ContentAlignment.MiddleLeft;
+        _cancelButton.TextAlign = ContentAlignment.MiddleRight;
+        _cancelButton.Image = _iconClear;
+
         _labelLibFlac.Text =
             $"libFLAC: {(NativeFlacChecker.IsLibraryAvailable() ? "available" : "not available")}";
         _labelMpg123.Text =
@@ -375,7 +398,14 @@ public sealed class MainForm : Form
         // Cancel any in-flight work before the form is destroyed so that mpg123
         // worker calls finish before Shutdown() tears down the native library.
         FormClosing += OnFormClosing;
-        FormClosed += (_, _) => Mp3Mpg123Backend.Shutdown();
+        FormClosed += (_, _) =>
+        {
+            Mp3Mpg123Backend.Shutdown();
+            _iconStart?.Dispose();
+            _iconPause?.Dispose();
+            _iconCancel?.Dispose();
+            _iconClear?.Dispose();
+        };
 
         Load += OnFormLoad;
     }
@@ -1039,6 +1069,8 @@ public sealed class MainForm : Form
             || state == AnalysisState.Paused
             || (state == AnalysisState.Idle && _queuedFiles.Count > 0);
         _globalBar.Paused = state == AnalysisState.Paused;
+        _startButton.Image = state == AnalysisState.Analysing ? _iconPause : _iconStart;
+        _cancelButton.Image = state != AnalysisState.Idle ? _iconCancel : _iconClear;
     }
 
     private void OnFileCompleted(FileCompletedEventArgs args)
@@ -1353,6 +1385,14 @@ public sealed class MainForm : Form
         if (bytes >= 1_024L)
             return $"{bytes / 1_024.0:F1} KB";
         return $"{bytes} B";
+    }
+
+    private static Image? LoadEmbeddedImage(string name)
+    {
+        using var stream = Assembly
+            .GetExecutingAssembly()
+            .GetManifestResourceStream($"AudioIntegrityChecker.Resources.{name}");
+        return stream is null ? null : Image.FromStream(stream);
     }
 
     private void SetStatus(string message) => _statusLabel.Text = message;
