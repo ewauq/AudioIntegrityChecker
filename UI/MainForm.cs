@@ -46,7 +46,7 @@ public sealed class MainForm : Form
     private bool _sortAscending = true;
 
     private readonly BufferedListView _listView;
-    private readonly ProgressBar _globalBar;
+    private readonly TextProgressBar _globalBar;
     private readonly Panel _globalBarWrapper;
     private readonly Button _startButton;
     private readonly Button _cancelButton;
@@ -85,8 +85,10 @@ public sealed class MainForm : Form
     private const int ColMessage = 6;
     private const int ColError = 7;
 
+    private readonly System.Windows.Forms.Timer _progressBarTimer;
+
     private const int ButtonRowHeight = 40;
-    private const int GlobalBarHeight = 20;
+    private const int GlobalBarHeight = 26;
 
     // Initial column widths in pixels (user-resizable at runtime)
     private const int ColDirWidth = 200;
@@ -257,7 +259,7 @@ public sealed class MainForm : Form
             Padding = new Padding(4, 0, 4, 4),
             Visible = false,
         };
-        _globalBar = new ProgressBar
+        _globalBar = new TextProgressBar
         {
             Dock = DockStyle.Fill,
             Minimum = 0,
@@ -336,6 +338,9 @@ public sealed class MainForm : Form
             sepMpg123,
             _labelMpg123,
         ]);
+
+        _progressBarTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        _progressBarTimer.Tick += OnProgressBarTick;
 
         _ramTimer = new System.Windows.Forms.Timer { Interval = RamUpdateIntervalMs };
         _ramTimer.Tick += (_, _) =>
@@ -507,7 +512,6 @@ public sealed class MainForm : Form
     private async Task ScanAsync(string[] droppedPaths, CancellationToken cancellationToken)
     {
         _globalBar.Style = ProgressBarStyle.Marquee;
-        _globalBar.MarqueeAnimationSpeed = 30; // Windows marquee speed unit (lower = faster)
         ShowGlobalBar(true);
 
         List<FileEntry> entries;
@@ -939,6 +943,7 @@ public sealed class MainForm : Form
             state == AnalysisState.Analysing
             || state == AnalysisState.Paused
             || (state == AnalysisState.Idle && _queuedFiles.Count > 0);
+        _globalBar.Paused = state == AnalysisState.Paused;
     }
 
     private void OnFileCompleted(FileCompletedEventArgs args)
@@ -994,12 +999,6 @@ public sealed class MainForm : Form
             item.SubItems[ColError].Text = result.ErrorMessage ?? string.Empty;
 
             UpdateStatusBar();
-
-            // Stop updating the status label once all files are accounted for;
-            // the await continuation will overwrite it with the final summary.
-            if (completed < _totalFiles)
-                SetStatus(BuildProgressStatus(completed));
-
             RefreshPausingState();
         });
     }
@@ -1112,6 +1111,13 @@ public sealed class MainForm : Form
         _globalBarWrapper.Height = visible ? GlobalBarHeight + 4 : 0;
         _bottomPanel.Height =
             ButtonRowHeight + (_globalBarWrapper.Visible ? _globalBarWrapper.Height : 0);
+        if (visible)
+            _progressBarTimer.Start();
+        else
+        {
+            _progressBarTimer.Stop();
+            _globalBar.Text = "";
+        }
     }
 
     private void UpdateStatusBar()
@@ -1180,18 +1186,35 @@ public sealed class MainForm : Form
         return $"{duration.Seconds}s";
     }
 
-    private string BuildProgressStatus(int completed)
+    private void OnProgressBarTick(object? sender, EventArgs e)
     {
-        var elapsed = _analysisStopwatch.Elapsed;
-        // Need a few completed files AND ~1s of data before the rate is stable
-        // enough to extrapolate, otherwise the ETA jumps around wildly.
-        if (completed < 3 || elapsed.TotalSeconds < 1.0)
-            return $"Processing: {completed}/{_totalFiles} (estimating time...)";
+        if (_globalBar.Style == ProgressBarStyle.Marquee)
+        {
+            _globalBar.MarqueeOffset += 40;
+            return;
+        }
+        _globalBar.Text = BuildProgressBarText();
+    }
 
-        double rate = completed / elapsed.TotalSeconds;
-        double remainingSeconds = (_totalFiles - completed) / rate;
-        var remaining = TimeSpan.FromSeconds(remainingSeconds);
-        return $"Processing: {completed}/{_totalFiles} (~{FormatDuration(remaining)} remaining)";
+    private string BuildProgressBarText()
+    {
+        int pct = _totalFiles > 0 ? (int)((double)_completedFiles / _totalFiles * 100) : 0;
+        string elapsed = _analysisStopwatch.Elapsed.ToString(@"hh\:mm\:ss");
+        if (_analysisState is AnalysisState.Pausing or AnalysisState.Paused)
+            return $"Paused - {pct}% - {_completedFiles}/{_totalFiles} files - Elapsed time: {elapsed}";
+        return $"Progression: {pct}% - {_completedFiles}/{_totalFiles} files"
+            + $" - Elapsed time: {elapsed} - Remaining time: {BuildEtaString(_analysisStopwatch.Elapsed)}";
+    }
+
+    private string BuildEtaString(TimeSpan elapsed)
+    {
+        if (elapsed.TotalSeconds < 1.0 || _completedFiles < 3)
+            return "--:--:--";
+        double rate = _completedFiles / elapsed.TotalSeconds;
+        double remaining = (_totalFiles - _completedFiles) / rate;
+        if (remaining <= 0)
+            return "--:--:--";
+        return TimeSpan.FromSeconds(remaining).ToString(@"hh\:mm\:ss");
     }
 
     private static string FormatBytes(long bytes)
