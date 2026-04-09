@@ -381,14 +381,14 @@ public sealed class MainForm : Form
 
         _startButton.Width = 106;
         _startButton.TextImageRelation = TextImageRelation.ImageBeforeText;
-        _startButton.ImageAlign = ContentAlignment.MiddleLeft;
-        _startButton.TextAlign = ContentAlignment.MiddleRight;
+        _startButton.ImageAlign = ContentAlignment.MiddleCenter;
+        _startButton.TextAlign = ContentAlignment.MiddleCenter;
         _startButton.Image = _iconStart;
 
         _cancelButton.Width = 96;
         _cancelButton.TextImageRelation = TextImageRelation.ImageBeforeText;
-        _cancelButton.ImageAlign = ContentAlignment.MiddleLeft;
-        _cancelButton.TextAlign = ContentAlignment.MiddleRight;
+        _cancelButton.ImageAlign = ContentAlignment.MiddleCenter;
+        _cancelButton.TextAlign = ContentAlignment.MiddleCenter;
         _cancelButton.Image = _iconClear;
 
         _labelLibFlac.Text =
