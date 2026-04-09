@@ -28,6 +28,8 @@ public sealed class MainForm : Form
     private int _completedFiles;
     private long _totalBytes;
     private TimeSpan _totalDuration;
+    private TimeSpan _totalScannedDuration;
+    private readonly Dictionary<string, long> _fileSizes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Stopwatch _analysisStopwatch = new();
 
     private enum AnalysisState
@@ -502,6 +504,8 @@ public sealed class MainForm : Form
         _listView.Items.Clear();
         _totalBytes = 0;
         _totalDuration = TimeSpan.Zero;
+        _totalScannedDuration = TimeSpan.Zero;
+        _fileSizes.Clear();
 
         SetAnalysisState(AnalysisState.Idle);
         SetStatus("Scanning…");
@@ -577,12 +581,97 @@ public sealed class MainForm : Form
         }
         _listView.EndUpdate();
 
+        foreach (var entry in entries)
+            _fileSizes[entry.FilePath] = entry.Bytes;
+
+        _ = ReadHeaderDurationsAsync(entries, _scanCts!.Token);
+
         int fileCount = _queuedFiles.Count;
         SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
         UpdateStatusBar();
         UpdateHelpPanel();
         SetAnalysisState(AnalysisState.Idle);
+    }
+
+    private async Task ReadHeaderDurationsAsync(
+        IReadOnlyList<FileEntry> entries,
+        CancellationToken ct
+    )
+    {
+        const int FlacBytes = 42;
+        const int Mp3Bytes = 10_240;
+        var flacBuf = new byte[FlacBytes];
+        var mp3Buf = new byte[Mp3Bytes];
+
+        await Task.Run(
+            () =>
+            {
+                foreach (var entry in entries)
+                {
+                    if (ct.IsCancellationRequested)
+                        return;
+
+                    TimeSpan? duration = null;
+                    try
+                    {
+                        if (entry.Format == "FLAC")
+                        {
+                            using var fs = new FileStream(
+                                entry.FilePath,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.Read,
+                                bufferSize: 64
+                            );
+                            if (fs.Read(flacBuf, 0, FlacBytes) >= FlacBytes)
+                            {
+                                var (samples, rate) = FlacMetadataReader.TryReadStreamInfo(flacBuf);
+                                if (rate > 0)
+                                    duration = TimeSpan.FromSeconds((double)samples / rate);
+                            }
+                        }
+                        else if (entry.Format == "MP3")
+                        {
+                            using var fs = new FileStream(
+                                entry.FilePath,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.Read,
+                                bufferSize: 4096
+                            );
+                            int read = fs.Read(mp3Buf, 0, Mp3Bytes);
+                            if (read > 0)
+                                duration = Mp3MetadataReader.TryReadDurationFromHeader(
+                                    mp3Buf.AsSpan(0, read),
+                                    entry.Bytes
+                                );
+                        }
+                    }
+                    catch
+                    {
+                        // Locked or deleted file — skip silently.
+                    }
+
+                    if (!duration.HasValue)
+                        continue;
+
+                    var d = duration.Value;
+                    var captured = entry;
+                    BeginInvoke(() =>
+                    {
+                        _totalScannedDuration += d;
+                        if (
+                            _itemByPath.TryGetValue(captured.FilePath, out var item)
+                            && string.IsNullOrEmpty(item.SubItems[ColDuration].Text)
+                        )
+                            item.SubItems[ColDuration].Text = FormatTrackDuration(d);
+                        UpdateStatusBar();
+                    });
+                }
+            },
+            ct
+        );
     }
 
     private async void OnStartClick(object? sender, EventArgs e)
@@ -754,6 +843,8 @@ public sealed class MainForm : Form
         _listView.Items.Clear();
         _totalBytes = 0;
         _totalDuration = TimeSpan.Zero;
+        _totalScannedDuration = TimeSpan.Zero;
+        _fileSizes.Clear();
         _totalFiles = 0;
         _completedFiles = 0;
         _countOk = 0;
@@ -1125,8 +1216,13 @@ public sealed class MainForm : Form
         int fileCount = _queuedFiles.Count;
         _labelFiles.Text = $"{fileCount} file{(fileCount == 1 ? "" : "s")}";
 
+        // Show exact analyzed duration when available; fall back to header-estimated
+        // total during the scan phase (before any analysis has started).
+        var displayDuration =
+            _totalDuration > TimeSpan.Zero ? _totalDuration : _totalScannedDuration;
+
         bool hasSize = _totalBytes > 0;
-        bool hasDuration = _totalDuration > TimeSpan.Zero;
+        bool hasDuration = displayDuration > TimeSpan.Zero;
 
         _sepSize.Visible = hasSize;
         _labelSize.Visible = hasSize;
@@ -1136,7 +1232,7 @@ public sealed class MainForm : Form
         _sepDuration.Visible = hasDuration;
         _labelDuration.Visible = hasDuration;
         if (hasDuration)
-            _labelDuration.Text = FormatDuration(_totalDuration);
+            _labelDuration.Text = FormatDuration(displayDuration);
     }
 
     // -------------------------------------------------------------------------

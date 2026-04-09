@@ -31,6 +31,33 @@ internal static class Mp3MetadataReader
         return ParseDuration(fileBuffer.Slice((int)frameAreaStart, toRead), fileSize, id3Size);
     }
 
+    /// <summary>
+    /// Estimates track duration from a partial header buffer and the actual file size on disk.
+    /// Used for header-only reads where the buffer is smaller than the full file.
+    /// The CBR fallback uses <paramref name="actualFileSize"/> instead of the buffer length,
+    /// giving a correct estimate even on a 10 KB read.
+    /// </summary>
+    internal static TimeSpan? TryReadDurationFromHeader(
+        ReadOnlySpan<byte> header,
+        long actualFileSize
+    )
+    {
+        if (actualFileSize < Mp3Format.FrameHeaderSize)
+            return null;
+
+        int id3Size = ReadId3v2Size(header);
+        long frameAreaStart = Math.Min(id3Size, actualFileSize);
+        long remaining = actualFileSize - frameAreaStart;
+        if (remaining < Mp3Format.FrameHeaderSize)
+            return null;
+
+        int toRead = (int)Math.Min(remaining, (long)(header.Length - frameAreaStart));
+        if (toRead < Mp3Format.FrameHeaderSize)
+            return null;
+
+        return ParseDuration(header.Slice((int)frameAreaStart, toRead), actualFileSize, id3Size);
+    }
+
     private static int ReadId3v2Size(ReadOnlySpan<byte> buffer)
     {
         if (buffer.Length < Mp3Format.Id3v2HeaderSize)
