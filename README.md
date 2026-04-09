@@ -2,7 +2,7 @@
 
 A Windows utility for verifying the integrity of audio files.
 
-Just drop a folder or files, click **Start scan**, and get a clear report of every corrupt or structurally broken file. A built-in help panel explains each diagnostic in plain language and suggests how to fix it.
+Drop a folder or individual files, click **Start scan**, and get a clear report of every corrupt or structurally broken file. A built-in help panel explains each diagnostic in plain language and suggests how to fix it.
 
 ![Screenshot](https://i.imgur.com/2HVeFFt.png)
 
@@ -10,9 +10,13 @@ Just drop a folder or files, click **Start scan**, and get a clear report of eve
 
 ## How it works
 
-Audio Integrity Checker loads each file entirely into memory and runs it through its format-specific decoder from start to finish. There is no playback — just a full read of every byte. Any anomaly in the audio data is caught and reported.
+Audio Integrity Checker loads each file into memory and runs it through its format-specific decoder from start to finish. There is no playback, just a full read of every byte. Any anomaly in the audio data is caught and reported.
 
-Files are processed in parallel across multiple threads. On an SSD this makes a substantial difference, since the bottleneck shifts to pure decoding speed. On a HDD, the mechanical seek time between files limits throughput — a large collection will still take considerably longer than on flash storage.
+Files are processed in parallel across multiple threads (up to 8). On an SSD this makes a noticeable difference, since the bottleneck is pure decoding speed. On a HDD, mechanical seek time between files limits throughput, so a large collection will take longer than on flash storage.
+
+During a scan, file durations are estimated from a small header read (42 bytes for FLAC, 10 KB for MP3) so the Duration column fills in before analysis starts.
+
+The progress bar shows elapsed time and a remaining time estimate that improves as more files complete. You can pause and resume analysis at any time: in-flight files finish before the pause takes effect, and the stopwatch pauses with them.
 
 ---
 
@@ -40,9 +44,9 @@ Additional checks:
 
 **Pass 2 — Full audio decode via [mpg123](https://www.mpg123.de/)**
 
-The entire buffer is fed to mpg123 and fully decoded to PCM. This catches corruption that survives the structural scan — bit reservoir errors, Huffman decoding failures, and similar low-level issues.
+The entire buffer is fed to mpg123 and fully decoded to PCM. This catches corruption that survives the structural scan: bit reservoir errors, Huffman decoding failures, and similar low-level issues.
 
-Pass 2 is skipped if Pass 1 already found an error, since the file is already confirmed corrupt. If `mpg123.dll` is not found next to the exe, Pass 2 is disabled entirely and a warning is shown in the status bar — Pass 1 still runs.
+Pass 2 is skipped if Pass 1 already found an error, since the file is already confirmed corrupt. If `mpg123.dll` is not found next to the exe, Pass 2 is disabled entirely and a warning is shown in the status bar; Pass 1 still runs.
 
 ---
 
@@ -59,7 +63,7 @@ Each scanned file is assigned a **Result** (OK or ISSUE) and, when an issue is f
 
 The **Message** column gives a plain-language description of the issue along with its position in the file (timecode and frame number when available). The **Error** column contains the raw diagnostic code for reference.
 
-Files of unsupported formats are not listed — they are silently skipped before the scan starts.
+Files of unsupported formats are not listed; they are silently skipped before the scan starts.
 
 **Keyboard shortcut:** select one or more rows and press **Ctrl+C** to copy them to the clipboard as a JSON array (path, name, duration, format, result, message, error code).
 
@@ -74,7 +78,7 @@ Files of unsupported formats are not listed — they are silently skipped before
 | `TRAILING_GARBAGE`  | Medium   | Non-audio bytes found immediately after the last valid audio frame                                   | A tagging tool appended an ID3 tag or padding to the file without cleaning up the FLAC stream     | Intact          | Strip the trailing data with a FLAC-aware tagger, or re-encode with `flac --best`                   |
 | `LOST_SYNC`         | Medium   | Stream synchronisation was lost in the middle of the file                                            | File was cut, spliced, or had data inserted or removed by an editor                               | Likely intact   | Re-encode from the source; if the file was spliced, re-download the original                        |
 | `BAD_HEADER`        | Medium   | Frame header that libFLAC could not parse                                                            | File was partially overwritten, or originates from a buggy encoder                                | Likely intact   | Re-encode the file; the source audio is likely fine                                                 |
-| `FRAME_CRC_MISMATCH`| Critical | A frame's CRC does not match its audio content                                                       | Bad disk sector, failed transfer, or storage degradation that silently flipped bits               | **Corrupt**     | Re-download or restore from backup — the damaged samples cannot be recovered                        |
+| `FRAME_CRC_MISMATCH`| Critical | A frame's CRC does not match its audio content                                                       | Bad disk sector, failed transfer, or storage degradation that silently flipped bits               | **Corrupt**     | Re-download or restore from backup; the damaged samples cannot be recovered                        |
 | `UNPARSEABLE_STREAM`| Critical | The bitstream is too broken for the decoder to interpret                                              | Severe corruption, wrong file extension, or an incomplete download                                | **Undecodable** | Re-download or restore from backup; try `flac --decode` to salvage any audio that is still readable |
 
 ### MP3
@@ -88,21 +92,21 @@ Files of unsupported formats are not listed — they are silently skipped before
 | `INFO_FRAME_COUNT_MISMATCH` | Low      | 1    | The Info CBR header declares a frame count that does not match the actual frame count   | Buggy encoder, or an editing tool that modified the file without updating the header                                                          | Intact        | Run mp3val `-f` to rebuild the Info header                                                                                            |
 | `LAME_TAG_CRC_MISMATCH`     | Low      | 1    | The LAME tag CRC does not match the first frame content                                 | The Xing/Info header was updated by a tool that did not recalculate the LAME CRC, or a buggy encoder wrote an incorrect CRC at creation time  | Intact        | No standard tool recalculates the LAME tag CRC. Audio content is unaffected — the file is safe to keep. Re-encode from a lossless source if a clean file is required. |
 | `TRUNCATED_STREAM`          | Critical | 1    | End of file reached in the middle of a frame                                            | Incomplete download, interrupted transfer, or a disk write that stopped early                                                                 | **Truncated** | Re-download the file; audio up to the cut point is still playable                                                                     |
-| `FRAME_CRC_MISMATCH`        | Critical | 1    | A frame's CRC does not match its side information                                       | Bit-level corruption from a bad disk sector, RAM error, or failed transfer                                                                    | **Corrupt**   | Re-download or restore from backup — the damaged frame's audio samples are wrong                                                      |
+| `FRAME_CRC_MISMATCH`        | Critical | 1    | A frame's CRC does not match its side information                                       | Bit-level corruption from a bad disk sector, RAM error, or failed transfer                                                                    | **Corrupt**   | Re-download or restore from backup; the damaged frame's audio samples are wrong                                                      |
 | `DECODE_ERROR`              | Critical | 2    | mpg123 reported a decode error (bit reservoir underrun, Huffman decoding failure, etc.) | Corruption that passed the structural scan but breaks actual audio decoding                                                                   | **Corrupt**   | Re-download or restore from backup; re-encoding from a lossless source is the only way to recover clean audio                         |
 
 ---
 
 ## Supported formats
 
-| Format     | Status                | Backend                                  |
-| ---------- | --------------------- | ---------------------------------------- |
-| FLAC       | Supported             | `libFLAC.dll` (falls back to `flac.exe`) |
-| MP3        | Supported since 1.1.0 | Pure C# structural parser + `mpg123.dll` |
-| Ogg Vorbis | Planned               | —                                        |
-| AAC / M4A  | Planned               | —                                        |
-| WAV / AIFF | Planned               | —                                        |
-| Opus       | Planned               | —                                        |
+| Format     | Status    | Backend                                  |
+| ---------- | --------- | ---------------------------------------- |
+| FLAC       | Supported | `libFLAC.dll` (falls back to `flac.exe`) |
+| MP3        | Supported | Pure C# structural parser + `mpg123.dll` |
+| Ogg Vorbis | Planned   | —                                        |
+| AAC / M4A  | Planned   | —                                        |
+| WAV / AIFF | Planned   | —                                        |
+| Opus       | Planned   | —                                        |
 
 ---
 
@@ -111,7 +115,7 @@ Files of unsupported formats are not listed — they are silently skipped before
 - Windows 10 or later (x64)
 - .NET 8 Desktop Runtime
 - `libFLAC.dll` placed next to the exe (or in PATH)
-- `mpg123.dll` placed next to the exe (optional — enables MP3 audio decode in Pass 2)
+- `mpg123.dll` placed next to the exe (optional; enables MP3 audio decode in Pass 2)
 
 ---
 
@@ -119,7 +123,7 @@ Files of unsupported formats are not listed — they are silently skipped before
 
 **Drag and drop is blocked — cursor shows a "no entry" symbol**
 
-This happens when the application is running with elevated privileges (administrator) while Windows Explorer is not. Windows silently blocks drag and drop from a lower-privilege process to a higher-privilege one. This commonly occurs when launching the exe with the administrator privileges.
+This happens when the application is running with elevated privileges (administrator) while Windows Explorer is not. Windows silently blocks drag and drop from a lower-privilege process to a higher-privilege one.
 
 Fix: launch the exe directly by double-clicking it from Explorer, or ensure your terminal is not running as administrator.
 
@@ -127,15 +131,15 @@ Fix: launch the exe directly by double-clicking it from Explorer, or ensure your
 
 **MP3 files are only partially checked — status bar shows `mpg123: not found`**
 
-Pass 2 (full audio decode) requires `mpg123.dll` to be loadable by Windows (for example, placed next to the exe or in a directory on your `PATH`). Without it, only the structural Pass 1 runs. Download the x64 build from [mpg123.de](https://www.mpg123.de/download.shtml) and typically place `mpg123.dll` alongside the exe for the most reliable detection.
+Pass 2 (full audio decode) requires `mpg123.dll` to be loadable by Windows. Without it, only the structural Pass 1 runs. Download the x64 build from [mpg123.de](https://www.mpg123.de/download.shtml) and place `mpg123.dll` next to the exe.
 
-If `mpg123.dll` is present in one of the searched locations but the warning still appears, the DLL may be built for the wrong architecture (32-bit vs 64-bit). This application requires the x64 build.
+If the DLL is present but the warning still appears, it may be built for the wrong architecture (32-bit vs 64-bit). This application requires the x64 build.
 
 ---
 
 **FLAC files fail or show an unexpected error — status bar shows `libFLAC: not found`**
 
-If `libFLAC.dll` is missing, the tool automatically falls back to `flac.exe` (searched first next to the exe, then in PATH). If neither is found, FLAC analysis will fail at runtime. Ensure at least one of the two is available.
+If `libFLAC.dll` is missing, the tool falls back to `flac.exe` (searched first next to the exe, then in PATH). If neither is found, FLAC analysis will fail at runtime. Ensure at least one of the two is available.
 
 ---
 
