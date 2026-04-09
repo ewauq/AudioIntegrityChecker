@@ -14,10 +14,6 @@ Audio Integrity Checker loads each file into memory and runs it through its form
 
 Files are processed in parallel across multiple threads (up to 8). On an SSD this makes a noticeable difference, since the bottleneck is pure decoding speed. On a HDD, mechanical seek time between files limits throughput, so a large collection will take longer than on flash storage.
 
-During a scan, file durations are estimated from a small header read (42 bytes for FLAC, 10 KB for MP3) so the Duration column fills in before analysis starts.
-
-The progress bar shows elapsed time and a remaining time estimate that improves as more files complete. You can pause and resume analysis at any time: in-flight files finish before the pause takes effect, and the stopwatch pauses with them.
-
 ---
 
 ## FLAC
