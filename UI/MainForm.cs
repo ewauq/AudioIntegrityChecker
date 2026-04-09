@@ -28,13 +28,28 @@ public sealed class MainForm : Form
     private int _completedFiles;
     private long _totalBytes;
     private TimeSpan _totalDuration;
+    private TimeSpan _totalScannedDuration;
+    private readonly Dictionary<string, long> _fileSizes = new(StringComparer.OrdinalIgnoreCase);
+    private long _processedBytes;
+    private readonly Stopwatch _analysisStopwatch = new();
 
-    private bool _isAnalysing;
+    private enum AnalysisState
+    {
+        Idle,
+        Analysing,
+        Pausing,
+        Paused,
+    }
+
+    private AnalysisState _analysisState = AnalysisState.Idle;
+    private PauseController? _pauseController;
+    private int _startedFiles;
+
     private int _sortColumn = -1;
     private bool _sortAscending = true;
 
     private readonly BufferedListView _listView;
-    private readonly ProgressBar _globalBar;
+    private readonly TextProgressBar _globalBar;
     private readonly Panel _globalBarWrapper;
     private readonly Button _startButton;
     private readonly Button _cancelButton;
@@ -73,8 +88,10 @@ public sealed class MainForm : Form
     private const int ColMessage = 6;
     private const int ColError = 7;
 
+    private readonly System.Windows.Forms.Timer _progressBarTimer;
+
     private const int ButtonRowHeight = 40;
-    private const int GlobalBarHeight = 20;
+    private const int GlobalBarHeight = 26;
 
     // Initial column widths in pixels (user-resizable at runtime)
     private const int ColDirWidth = 200;
@@ -92,7 +109,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
-        Text = $"Audio Integrity Checker — {v.Major}.{v.Minor}.{v.Build}";
+        Text = $"Audio Integrity Checker v{v.Major}.{v.Minor}.{v.Build}";
         MinimumSize = new Size(900, 580);
         Size = new Size(1080, 640);
         StartPosition = FormStartPosition.CenterScreen;
@@ -245,7 +262,7 @@ public sealed class MainForm : Form
             Padding = new Padding(4, 0, 4, 4),
             Visible = false,
         };
-        _globalBar = new ProgressBar
+        _globalBar = new TextProgressBar
         {
             Dock = DockStyle.Fill,
             Minimum = 0,
@@ -297,7 +314,9 @@ public sealed class MainForm : Form
         _sepDuration = new ToolStripSeparator { Visible = false };
         _labelDuration = new ToolStripStatusLabel { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
-        _labelRam = new ToolStripStatusLabel("RAM: —");
+        _labelRam = new ToolStripStatusLabel(
+            $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
+        );
         var sepWorkers = new ToolStripSeparator();
         _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
         _sepDlls = new ToolStripSeparator();
@@ -322,6 +341,9 @@ public sealed class MainForm : Form
             sepMpg123,
             _labelMpg123,
         ]);
+
+        _progressBarTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        _progressBarTimer.Tick += OnProgressBarTick;
 
         _ramTimer = new System.Windows.Forms.Timer { Interval = RamUpdateIntervalMs };
         _ramTimer.Tick += (_, _) =>
@@ -483,8 +505,11 @@ public sealed class MainForm : Form
         _listView.Items.Clear();
         _totalBytes = 0;
         _totalDuration = TimeSpan.Zero;
+        _totalScannedDuration = TimeSpan.Zero;
+        _fileSizes.Clear();
+        _processedBytes = 0;
 
-        SetAnalysing(false);
+        SetAnalysisState(AnalysisState.Idle);
         SetStatus("Scanning…");
 
         _ = ScanAsync(paths, _scanCts.Token);
@@ -493,7 +518,6 @@ public sealed class MainForm : Form
     private async Task ScanAsync(string[] droppedPaths, CancellationToken cancellationToken)
     {
         _globalBar.Style = ProgressBarStyle.Marquee;
-        _globalBar.MarqueeAnimationSpeed = 30; // Windows marquee speed unit (lower = faster)
         ShowGlobalBar(true);
 
         List<FileEntry> entries;
@@ -542,7 +566,7 @@ public sealed class MainForm : Form
                 UseItemStyleForSubItems = false,
             };
             item.SubItems.Add(Path.GetFileName(entry.FilePath));
-            // Duration is populated later by the checker (see OnFileCompleted) — scanning
+            // Duration is populated later by the checker (see OnFileCompleted). Scanning
             // no longer opens each file a second time to peek at metadata.
             item.SubItems.Add("");
             item.SubItems.Add(format);
@@ -559,20 +583,121 @@ public sealed class MainForm : Form
         }
         _listView.EndUpdate();
 
+        foreach (var entry in entries)
+            _fileSizes[entry.FilePath] = entry.Bytes;
+
+        _ = ReadHeaderDurationsAsync(entries, _scanCts!.Token);
+
         int fileCount = _queuedFiles.Count;
         SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
         UpdateStatusBar();
         UpdateHelpPanel();
-        SetAnalysing(false);
+        SetAnalysisState(AnalysisState.Idle);
+    }
+
+    private async Task ReadHeaderDurationsAsync(
+        IReadOnlyList<FileEntry> entries,
+        CancellationToken ct
+    )
+    {
+        const int FlacBytes = 42;
+        const int Mp3Bytes = 10_240;
+        var flacBuf = new byte[FlacBytes];
+        var mp3Buf = new byte[Mp3Bytes];
+
+        await Task.Run(
+            () =>
+            {
+                foreach (var entry in entries)
+                {
+                    if (ct.IsCancellationRequested)
+                        return;
+
+                    TimeSpan? duration = null;
+                    try
+                    {
+                        if (entry.Format == "FLAC")
+                        {
+                            using var fs = new FileStream(
+                                entry.FilePath,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.Read,
+                                bufferSize: 64
+                            );
+                            if (fs.Read(flacBuf, 0, FlacBytes) >= FlacBytes)
+                            {
+                                var (samples, rate) = FlacMetadataReader.TryReadStreamInfo(flacBuf);
+                                if (rate > 0)
+                                    duration = TimeSpan.FromSeconds((double)samples / rate);
+                            }
+                        }
+                        else if (entry.Format == "MP3")
+                        {
+                            using var fs = new FileStream(
+                                entry.FilePath,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.Read,
+                                bufferSize: 4096
+                            );
+                            int read = fs.Read(mp3Buf, 0, Mp3Bytes);
+                            if (read > 0)
+                                duration = Mp3MetadataReader.TryReadDurationFromHeader(
+                                    mp3Buf.AsSpan(0, read),
+                                    entry.Bytes
+                                );
+                        }
+                    }
+                    catch
+                    {
+                        // Locked or deleted file — skip silently.
+                    }
+
+                    if (!duration.HasValue)
+                        continue;
+
+                    var d = duration.Value;
+                    var captured = entry;
+                    BeginInvoke(() =>
+                    {
+                        _totalScannedDuration += d;
+                        if (
+                            _itemByPath.TryGetValue(captured.FilePath, out var item)
+                            && string.IsNullOrEmpty(item.SubItems[ColDuration].Text)
+                        )
+                            item.SubItems[ColDuration].Text = FormatTrackDuration(d);
+                        UpdateStatusBar();
+                    });
+                }
+            },
+            ct
+        );
     }
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
+        switch (_analysisState)
+        {
+            case AnalysisState.Idle:
+                await StartAnalysisAsync();
+                break;
+            case AnalysisState.Analysing:
+                PauseAnalysis();
+                break;
+            case AnalysisState.Paused:
+                ResumeAnalysis();
+                break;
+        }
+    }
+
+    private async Task StartAnalysisAsync()
+    {
         if (_queuedFiles.Count == 0)
             return;
 
-        SetAnalysing(true);
+        SetAnalysisState(AnalysisState.Analysing);
         _countOk = 0;
         _countMetadata = 0;
         _countIndex = 0;
@@ -581,6 +706,8 @@ public sealed class MainForm : Form
         _countError = 0;
         _totalFiles = _queuedFiles.Count;
         _completedFiles = 0;
+        _startedFiles = 0;
+        _processedBytes = 0;
         // Duration is reaccumulated by OnFileCompleted as each checker reports it.
         _totalDuration = TimeSpan.Zero;
         UpdateStatusBar();
@@ -599,56 +726,107 @@ public sealed class MainForm : Form
         ShowGlobalBar(true);
 
         _pipeline = new AnalysisPipeline(_registry);
+        _pipeline.FileStarted += OnFileStarted;
         _pipeline.FileCompleted += OnFileCompleted;
         _pipeline.FileProgressChanged += OnFileProgress;
 
         _analysisCts = new CancellationTokenSource();
+        _pauseController = new PauseController();
 
         var globalProgress = new Progress<int>(completedCount =>
             BeginInvoke(() => _globalBar.Value = Math.Min(completedCount, _totalFiles))
         );
 
-        var stopwatch = Stopwatch.StartNew();
+        _analysisStopwatch.Restart();
         try
         {
-            await _pipeline.RunAsync(_queuedFiles, _analysisCts.Token, globalProgress);
-            stopwatch.Stop();
+            await _pipeline.RunAsync(
+                _queuedFiles,
+                _analysisCts.Token,
+                _pauseController,
+                globalProgress
+            );
+            _analysisStopwatch.Stop();
 
             string timeText =
-                stopwatch.Elapsed.TotalSeconds < 60 // format as "Xs" if under a minute, otherwise "Xm YYs"
-                    ? $"{stopwatch.Elapsed.TotalSeconds:F1}s"
-                    : $"{(int)stopwatch.Elapsed.TotalMinutes}m {stopwatch.Elapsed.Seconds:D2}s";
+                _analysisStopwatch.Elapsed.TotalSeconds < 60 // format as "Xs" if under a minute, otherwise "Xm YYs"
+                    ? $"{_analysisStopwatch.Elapsed.TotalSeconds:F1}s"
+                    : $"{(int)_analysisStopwatch.Elapsed.TotalMinutes}m {_analysisStopwatch.Elapsed.Seconds:D2}s";
             int n = _completedFiles;
             SetStatus($"Processed {(n == 1 ? "1 file" : $"{n} files")} in {timeText}.");
 
-            ShowCompletionDialog(stopwatch.Elapsed);
+            ShowCompletionDialog(_analysisStopwatch.Elapsed);
         }
         catch (OperationCanceledException)
         {
-            stopwatch.Stop();
+            _analysisStopwatch.Stop();
             SetStatus("Cancelled.");
         }
         catch (Exception ex)
         {
-            stopwatch.Stop();
+            _analysisStopwatch.Stop();
             SetStatus($"Pipeline error: {ex.Message}");
         }
         finally
         {
+            _pauseController.Reset();
+            _pauseController = null;
             _analysisCts.Dispose();
             _analysisCts = null;
-            SetAnalysing(false);
+            SetAnalysisState(AnalysisState.Idle);
             ShowGlobalBar(false);
             _ = Task.Run(TrimWorkingSet);
         }
     }
 
+    private void PauseAnalysis()
+    {
+        _pauseController?.Pause();
+        _analysisStopwatch.Stop();
+        SetAnalysisState(AnalysisState.Pausing);
+        RefreshPausingState();
+    }
+
+    private void OnFileStarted(string filePath)
+    {
+        Interlocked.Increment(ref _startedFiles);
+        if (_analysisState == AnalysisState.Pausing)
+            BeginInvoke(RefreshPausingState);
+    }
+
+    private void RefreshPausingState()
+    {
+        if (_analysisState != AnalysisState.Pausing)
+            return;
+        int inFlight = _startedFiles - _completedFiles;
+        if (inFlight <= 0)
+        {
+            SetAnalysisState(AnalysisState.Paused);
+            SetStatus("Paused.");
+        }
+        else
+        {
+            _startButton.Text = $"Waiting ({inFlight})...";
+        }
+    }
+
+    private void ResumeAnalysis()
+    {
+        _analysisStopwatch.Start();
+        SetAnalysisState(AnalysisState.Analysing);
+        SetStatus("");
+        _pauseController?.Resume();
+    }
+
     private void OnCancelClick(object? sender, EventArgs e)
     {
-        if (_isAnalysing)
+        if (_analysisState != AnalysisState.Idle)
         {
             _cancelButton.Enabled = false;
             SetStatus("Cancelling…");
+            // Unblock the pause gate so the cancellation token propagates
+            // through the pipeline loop instead of hanging.
+            _pauseController?.Reset();
             _analysisCts?.Cancel();
         }
         else
@@ -659,6 +837,8 @@ public sealed class MainForm : Form
 
     private void OnClear()
     {
+        _pauseController?.Reset();
+        _pauseController = null;
         _scanCts?.Cancel();
 
         _queuedFiles.Clear();
@@ -666,6 +846,9 @@ public sealed class MainForm : Form
         _listView.Items.Clear();
         _totalBytes = 0;
         _totalDuration = TimeSpan.Zero;
+        _totalScannedDuration = TimeSpan.Zero;
+        _fileSizes.Clear();
+        _processedBytes = 0;
         _totalFiles = 0;
         _completedFiles = 0;
         _countOk = 0;
@@ -678,7 +861,7 @@ public sealed class MainForm : Form
         UpdateStatusBar();
         UpdateHelpPanel();
         SetStatus("");
-        SetAnalysing(false);
+        SetAnalysisState(AnalysisState.Idle);
         TrimWorkingSet();
     }
 
@@ -726,7 +909,7 @@ public sealed class MainForm : Form
     }
 
     // -------------------------------------------------------------------------
-    // Column header context menu — show/hide optional columns
+    // Column header context menu: show/hide optional columns
     // -------------------------------------------------------------------------
 
     // Columns that can be hidden; maps column index → saved width before hiding
@@ -838,19 +1021,33 @@ public sealed class MainForm : Form
             : HelpContent.GetHtml(errorText, positionalInfo);
     }
 
-    private void SetAnalysing(bool active)
+    private void SetAnalysisState(AnalysisState state)
     {
-        _isAnalysing = active;
+        _analysisState = state;
+        bool active = state != AnalysisState.Idle;
         _cancelButton.Text = active ? "Cancel" : "Clear";
         _cancelButton.Enabled = active || _listView.Items.Count > 0;
-        _startButton.Enabled = !active && _queuedFiles.Count > 0;
+        _startButton.Text = state switch
+        {
+            AnalysisState.Analysing => "Pause",
+            AnalysisState.Pausing => $"Waiting ({_startedFiles - _completedFiles})...",
+            AnalysisState.Paused => "Resume",
+            _ => "Start scan",
+        };
+        _startButton.Enabled =
+            state == AnalysisState.Analysing
+            || state == AnalysisState.Paused
+            || (state == AnalysisState.Idle && _queuedFiles.Count > 0);
+        _globalBar.Paused = state == AnalysisState.Paused;
     }
 
     private void OnFileCompleted(FileCompletedEventArgs args)
     {
         // Increment all counters on the worker thread so they are visible to the await
-        // continuation via the task memory barrier — no BeginInvoke delay needed.
+        // continuation via the task memory barrier, no BeginInvoke delay needed.
         int completed = Interlocked.Increment(ref _completedFiles);
+        if (_fileSizes.TryGetValue(args.FilePath, out long fileBytes))
+            Interlocked.Add(ref _processedBytes, fileBytes);
         switch (args.Result.Category)
         {
             case CheckCategory.Ok:
@@ -884,7 +1081,7 @@ public sealed class MainForm : Form
             var color = ResultFormatting.GetSeverityColor(severity);
 
             // Duration is now extracted by the checker (from the in-memory buffer it
-            // already loaded), so we populate the column and total here — after scan.
+            // already loaded), so we populate the column and total here (after scan).
             if (args.Duration.HasValue)
             {
                 item.SubItems[ColDuration].Text = FormatTrackDuration(args.Duration);
@@ -899,11 +1096,7 @@ public sealed class MainForm : Form
             item.SubItems[ColError].Text = result.ErrorMessage ?? string.Empty;
 
             UpdateStatusBar();
-
-            // Stop updating the status label once all files are accounted for —
-            // the await continuation will overwrite it with the final summary.
-            if (completed < _totalFiles)
-                SetStatus($"Processing: {completed}/{_totalFiles}");
+            RefreshPausingState();
         });
     }
 
@@ -964,21 +1157,21 @@ public sealed class MainForm : Form
         {
             if (_countCorruption > 0)
                 builder.AppendLine(
-                    $"{_countCorruption} CORRUPTION — audio data demonstrably damaged."
+                    $"{_countCorruption} CORRUPTION: audio data demonstrably damaged."
                 );
             if (_countError > 0)
                 builder.AppendLine(
-                    $"{_countError} ERROR — analysis tool failed, file state unknown."
+                    $"{_countError} ERROR: analysis tool failed, file state unknown."
                 );
             if (_countStructure > 0)
                 builder.AppendLine(
-                    $"{_countStructure} STRUCTURE — stream anomaly, audio likely intact."
+                    $"{_countStructure} STRUCTURE: stream anomaly, audio likely intact."
                 );
             if (_countIndex > 0)
-                builder.AppendLine($"{_countIndex} INDEX — seek/frame count mismatch.");
+                builder.AppendLine($"{_countIndex} INDEX: seek/frame count mismatch.");
             if (_countMetadata > 0)
                 builder.Append(
-                    $"{_countMetadata} METADATA — tag inconsistency, no playback impact."
+                    $"{_countMetadata} METADATA: tag inconsistency, no playback impact."
                 );
         }
 
@@ -1015,6 +1208,13 @@ public sealed class MainForm : Form
         _globalBarWrapper.Height = visible ? GlobalBarHeight + 4 : 0;
         _bottomPanel.Height =
             ButtonRowHeight + (_globalBarWrapper.Visible ? _globalBarWrapper.Height : 0);
+        if (visible)
+            _progressBarTimer.Start();
+        else
+        {
+            _progressBarTimer.Stop();
+            _globalBar.Text = "";
+        }
     }
 
     private void UpdateStatusBar()
@@ -1022,8 +1222,13 @@ public sealed class MainForm : Form
         int fileCount = _queuedFiles.Count;
         _labelFiles.Text = $"{fileCount} file{(fileCount == 1 ? "" : "s")}";
 
+        // Show exact analyzed duration when available; fall back to header-estimated
+        // total during the scan phase (before any analysis has started).
+        var displayDuration =
+            _totalDuration > TimeSpan.Zero ? _totalDuration : _totalScannedDuration;
+
         bool hasSize = _totalBytes > 0;
-        bool hasDuration = _totalDuration > TimeSpan.Zero;
+        bool hasDuration = displayDuration > TimeSpan.Zero;
 
         _sepSize.Visible = hasSize;
         _labelSize.Visible = hasSize;
@@ -1033,11 +1238,11 @@ public sealed class MainForm : Form
         _sepDuration.Visible = hasDuration;
         _labelDuration.Visible = hasDuration;
         if (hasDuration)
-            _labelDuration.Text = FormatDuration(_totalDuration);
+            _labelDuration.Text = FormatDuration(displayDuration);
     }
 
     // -------------------------------------------------------------------------
-    // Memory — trim OS working set after analysis
+    // Memory: trim OS working set after analysis
     // -------------------------------------------------------------------------
 
     [DllImport("kernel32.dll")]
@@ -1083,6 +1288,62 @@ public sealed class MainForm : Form
         return $"{duration.Seconds}s";
     }
 
+    private void OnProgressBarTick(object? sender, EventArgs e)
+    {
+        if (_globalBar.Style == ProgressBarStyle.Marquee)
+        {
+            _globalBar.MarqueeOffset += 40;
+            return;
+        }
+        _globalBar.Text = BuildProgressBarText();
+    }
+
+    private string BuildProgressBarText()
+    {
+        int pct = _totalFiles > 0 ? (int)((double)_completedFiles / _totalFiles * 100) : 0;
+        string elapsed = _analysisStopwatch.Elapsed.ToString(@"hh\:mm\:ss");
+        if (_analysisState is AnalysisState.Pausing or AnalysisState.Paused)
+            return $"Paused - {pct}% - {_completedFiles}/{_totalFiles} files - Elapsed time: {elapsed}";
+        return $"Progression: {pct}% - {_completedFiles}/{_totalFiles} files"
+            + $" - Elapsed time: {elapsed} - Remaining time: {BuildEtaString(_analysisStopwatch.Elapsed)}";
+    }
+
+    private string BuildEtaString(TimeSpan elapsed)
+    {
+        if (elapsed.TotalSeconds < 3.0 || _completedFiles < 5)
+            return "--:--:--";
+
+        // Priority 1: audio-duration rate — accounts for variable file lengths.
+        double scannedSec = _totalScannedDuration.TotalSeconds;
+        double analyzedSec = _totalDuration.TotalSeconds;
+        if (scannedSec > 0 && analyzedSec > 0)
+        {
+            double rate = analyzedSec / elapsed.TotalSeconds;
+            double remaining = scannedSec - analyzedSec;
+            if (remaining > 0 && rate > 0)
+                return TimeSpan.FromSeconds(remaining / rate).ToString(@"hh\:mm\:ss");
+        }
+
+        // Priority 2: bytes rate.
+        long processed = Interlocked.Read(ref _processedBytes);
+        if (processed > 0 && _totalBytes > processed)
+        {
+            double rate = processed / elapsed.TotalSeconds;
+            return TimeSpan.FromSeconds((_totalBytes - processed) / rate).ToString(@"hh\:mm\:ss");
+        }
+
+        // Priority 3: file count (fallback).
+        if (_completedFiles > 0)
+        {
+            double rate = _completedFiles / elapsed.TotalSeconds;
+            double remaining = (_totalFiles - _completedFiles) / rate;
+            if (remaining > 0)
+                return TimeSpan.FromSeconds(remaining).ToString(@"hh\:mm\:ss");
+        }
+
+        return "--:--:--";
+    }
+
     private static string FormatBytes(long bytes)
     {
         if (bytes >= 1_073_741_824L)
@@ -1097,7 +1358,7 @@ public sealed class MainForm : Form
     private void SetStatus(string message) => _statusLabel.Text = message;
 
     // -------------------------------------------------------------------------
-    // Ctrl+C — copy selected rows as JSON to clipboard
+    // Ctrl+C: copy selected rows as JSON to clipboard
     // -------------------------------------------------------------------------
 
     private sealed record ClipboardEntry(

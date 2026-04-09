@@ -46,7 +46,7 @@ public sealed class ProcessFlacChecker : IFormatChecker
                 null
             );
 
-        // Read STREAMINFO once — used both for timecode conversion and to expose the
+        // Read STREAMINFO once, used both for timecode conversion and to expose the
         // track duration to the UI (which no longer reads it during the scan phase).
         var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(filePath);
         TimeSpan? duration =

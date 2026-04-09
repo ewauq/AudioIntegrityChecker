@@ -49,7 +49,7 @@ internal static class Mp3StructuralParser
             {
                 if (frameCount == 0)
                 {
-                    // Still searching for the first frame — just advance
+                    // Still searching for the first frame, just advance
                     pos++;
                     continue;
                 }
@@ -88,7 +88,7 @@ internal static class Mp3StructuralParser
             // free bitrate (0), forbidden bitrate (15), and reserved sample rate (3).
             if (version == 1 || layer != 1 || bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3)
             {
-                // Not a valid MP3 frame header — emit BAD_HEADER and resync
+                // Not a valid MP3 frame header: emit BAD_HEADER and resync
                 diagnostics.Add((Mp3Diagnostic.BAD_HEADER, frameCount));
                 int syncPos = FindNextSync(buf, pos + 1);
                 if (syncPos < 0)
@@ -114,7 +114,7 @@ internal static class Mp3StructuralParser
 
             if (frameSize < Mp3Format.FrameHeaderSize)
             {
-                // Degenerate — skip one byte and resync
+                // Degenerate: skip one byte and resync
                 pos++;
                 continue;
             }
@@ -164,7 +164,7 @@ internal static class Mp3StructuralParser
             // ----------------------------------------------------------------
             if (pos + frameSize > buf.Length)
             {
-                // Allow for trailing ID3v1 tag — if remaining bytes look like "TAG", not truncated
+                // Allow for trailing ID3v1 tag. If remaining bytes look like "TAG", not truncated
                 int remaining = buf.Length - pos;
                 bool hasId3v1Tail =
                     buf.Length >= Id3v1TagSize
@@ -307,7 +307,7 @@ internal static class Mp3StructuralParser
         // buf[6]<<21 | buf[7]<<14 | buf[8]<<7 | buf[9] reconstructs the 28-bit value
         int tagSize = (buf[6] << 21) | (buf[7] << 14) | (buf[8] << 7) | buf[9];
 
-        // Flags byte (buf[5]) bit 4: footer present — adds another 10-byte block after the tag
+        // Flags byte (buf[5]) bit 4: footer present, adds another 10-byte block after the tag
         bool hasFooter = (buf[5] & Mp3Format.Id3v2FooterFlag) != 0;
 
         int skip =

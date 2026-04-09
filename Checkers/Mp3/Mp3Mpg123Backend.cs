@@ -33,7 +33,7 @@ internal static class Mp3Mpg123Backend
 
     /// <summary>
     /// Calls mpg123_init() exactly once across all threads.
-    /// Safe to call from parallel workers — subsequent calls return the cached result.
+    /// Safe to call from parallel workers. Subsequent calls return the cached result.
     /// </summary>
     internal static bool TryInitialize()
     {
@@ -95,7 +95,7 @@ internal static class Mp3Mpg123Backend
                     diagnostics.Add((Mp3Diagnostic.DECODE_ERROR, 0));
                     break;
                 }
-                // MPG123_NEED_MORE: all data already fed — treat as end of stream
+                // MPG123_NEED_MORE: all data already fed, treat as end of stream
                 break;
             }
         }

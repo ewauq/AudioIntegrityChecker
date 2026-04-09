@@ -48,7 +48,7 @@ internal static class Mp3Format
 
     // -------------------------------------------------------------------------
     // Bitrate tables (kbps) for MPEG Layer III
-    // Index 0 (free bitrate) and 15 (forbidden) are invalid — stored as 0.
+    // Index 0 (free bitrate) and 15 (forbidden) are invalid, stored as 0.
     // -------------------------------------------------------------------------
     internal static readonly int[] Mpeg1L3Bitrate =
     [
@@ -93,7 +93,7 @@ internal static class Mp3Format
     // -------------------------------------------------------------------------
     // Sample rate tables (Hz) indexed by [version][srIdx]
     // version encoding: 0=MPEG 2.5, 1=reserved, 2=MPEG 2, 3=MPEG 1
-    // srIdx 3 is reserved (invalid) — stored as 0
+    // srIdx 3 is reserved (invalid), stored as 0
     // -------------------------------------------------------------------------
     internal static readonly int[][] SampleRates =
     [

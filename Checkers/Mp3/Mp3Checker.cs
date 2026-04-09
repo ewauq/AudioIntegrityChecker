@@ -5,7 +5,7 @@ namespace AudioIntegrityChecker.Checkers.Mp3;
 
 internal enum Mp3Diagnostic
 {
-    // Pass 1 — structural
+    // Pass 1: structural
     JUNK_DATA,
     BAD_HEADER,
     FRAME_CRC_MISMATCH,
@@ -15,7 +15,7 @@ internal enum Mp3Diagnostic
     TRUNCATED_STREAM,
     LOST_SYNC,
 
-    // Pass 2 — decode
+    // Pass 2: decode
     DECODE_ERROR,
 }
 
@@ -83,7 +83,7 @@ public sealed class Mp3Checker : IFormatChecker
             );
         }
 
-        // Extract duration directly from the in-memory buffer — avoids reopening the
+        // Extract duration directly from the in-memory buffer, avoids reopening the
         // file during the scan phase. Computed up front so it is returned even when
         // a later check step errors out.
         TimeSpan? duration = Mp3MetadataReader.TryReadDuration(buf);
@@ -92,17 +92,17 @@ public sealed class Mp3Checker : IFormatChecker
         if (ct.IsCancellationRequested)
             return new CheckOutcome(CheckResult.Error("Cancelled.", CheckCategory.Error), duration);
 
-        // Pass 1 — structural parser (pure C#, no DLL)
+        // Pass 1: structural parser (pure C#, no DLL)
         var pass1 = Mp3StructuralParser.Scan(buf);
         progress.Report(0.50f);
         if (ct.IsCancellationRequested)
             return new CheckOutcome(CheckResult.Error("Cancelled.", CheckCategory.Error), duration);
 
-        // If Pass 1 produced any ERROR, skip Pass 2 — file is already confirmed corrupt
+        // If Pass 1 produced any ERROR, skip Pass 2: file is already confirmed corrupt
         if (pass1.Any(d => Mp3DiagnosticInfo.IsError(d.Diagnostic)))
             return new CheckOutcome(BuildResult(pass1), duration);
 
-        // Pass 2 — full audio decode via mpg123 (skipped if DLL unavailable)
+        // Pass 2: full audio decode via mpg123 (skipped if DLL unavailable)
         List<(Mp3Diagnostic Diagnostic, long FrameIndex)> pass2 = [];
         if (Mp3Mpg123Backend.IsLibraryAvailable() && Mp3Mpg123Backend.TryInitialize())
         {

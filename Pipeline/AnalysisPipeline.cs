@@ -4,13 +4,14 @@ namespace AudioIntegrityChecker.Pipeline;
 
 /// <summary>
 /// Dispatches files to IFormatChecker workers using a SemaphoreSlim-bounded task pool.
-/// Concurrency is capped at min(CPU count, 8) — optimal for CPU-bound FLAC decoding.
+/// Concurrency is capped at min(CPU count, 8), optimal for CPU-bound FLAC decoding.
 /// </summary>
 public sealed class AnalysisPipeline
 {
     private readonly CheckerRegistry _registry;
     private readonly int _workerCount;
 
+    public event Action<string>? FileStarted;
     public event Action<FileCompletedEventArgs>? FileCompleted;
     public event Action<FileProgressEventArgs>? FileProgressChanged;
 
@@ -23,6 +24,7 @@ public sealed class AnalysisPipeline
     public async Task RunAsync(
         IReadOnlyList<string> filePaths,
         CancellationToken cancellationToken,
+        PauseController? pauseController = null,
         IProgress<int>? globalProgress = null
     )
     {
@@ -32,6 +34,9 @@ public sealed class AnalysisPipeline
 
         foreach (var filePath in filePaths)
         {
+            if (pauseController is not null)
+                await pauseController.WaitIfPausedAsync(cancellationToken).ConfigureAwait(false);
+
             await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             var capturedPath = filePath;
@@ -39,6 +44,7 @@ public sealed class AnalysisPipeline
                 Task.Run(
                     () =>
                     {
+                        FileStarted?.Invoke(capturedPath);
                         try
                         {
                             var (outcome, format) = CheckFile(capturedPath, cancellationToken);
@@ -74,7 +80,7 @@ public sealed class AnalysisPipeline
         var checker = _registry.Resolve(filePath);
         if (checker is null)
         {
-            // Should not happen — unsupported files are filtered out before queuing.
+            // Should not happen: unsupported files are filtered out before queuing.
             var extension = Path.GetExtension(filePath).TrimStart('.');
             return (
                 new CheckOutcome(
