@@ -28,7 +28,7 @@ If `libFLAC.dll` is not found next to the exe, the tool automatically falls back
 
 MP3 analysis runs in two sequential passes on the same in-memory buffer.
 
-**Pass 1 — Structural parser (pure C#, no external library)**
+**Pass 1: Structural parser (pure C#, no external library)**
 
 Every frame header is parsed and validated: sync word, MPEG version, Layer III marker, bitrate, and sample rate. The parser then walks the stream frame by frame, computing each frame's expected size and verifying that the next frame starts exactly where it should.
 
@@ -38,7 +38,7 @@ Additional checks:
 - The Xing header (VBR files) or Info header (CBR files), if present, is validated: the declared frame count is compared against the actual count found during the scan.
 - If a LAME tag is present, its own CRC is verified.
 
-**Pass 2 — Full audio decode via [mpg123](https://www.mpg123.de/)**
+**Pass 2: Full audio decode via [mpg123](https://www.mpg123.de/)**
 
 The entire buffer is fed to mpg123 and fully decoded to PCM. This catches corruption that survives the structural scan: bit reservoir errors, Huffman decoding failures, and similar low-level issues.
 
@@ -53,9 +53,9 @@ Each scanned file is assigned a **Result** (OK or ISSUE) and, when an issue is f
 | Severity     | Meaning                                                                          |
 | ------------ | -------------------------------------------------------------------------------- |
 | **Low**      | Minor anomaly with no impact on audio playback (metadata or index inconsistency) |
-| **Medium**   | Stream structure anomaly — audio data is likely intact and the file is playable  |
-| **High**     | Analysis could not complete — file state is uncertain                            |
-| **Critical** | Audio data is demonstrably corrupted                                             |
+| **Medium**   | Stream structure anomaly: audio data is likely intact and the file is playable  |
+| **High**     | Analysis could not complete: file state is uncertain                            |
+| **Critical** | Audio data is corrupted                                             |
 
 The **Message** column gives a plain-language description of the issue along with its position in the file (timecode and frame number when available). The **Error** column contains the raw diagnostic code for reference.
 
