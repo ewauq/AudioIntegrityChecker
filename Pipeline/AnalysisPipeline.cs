@@ -11,6 +11,7 @@ public sealed class AnalysisPipeline
     private readonly CheckerRegistry _registry;
     private readonly int _workerCount;
 
+    public event Action<string>? FileStarted;
     public event Action<FileCompletedEventArgs>? FileCompleted;
     public event Action<FileProgressEventArgs>? FileProgressChanged;
 
@@ -23,6 +24,7 @@ public sealed class AnalysisPipeline
     public async Task RunAsync(
         IReadOnlyList<string> filePaths,
         CancellationToken cancellationToken,
+        PauseController? pauseController = null,
         IProgress<int>? globalProgress = null
     )
     {
@@ -32,6 +34,9 @@ public sealed class AnalysisPipeline
 
         foreach (var filePath in filePaths)
         {
+            if (pauseController is not null)
+                await pauseController.WaitIfPausedAsync(cancellationToken).ConfigureAwait(false);
+
             await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             var capturedPath = filePath;
@@ -39,6 +44,7 @@ public sealed class AnalysisPipeline
                 Task.Run(
                     () =>
                     {
+                        FileStarted?.Invoke(capturedPath);
                         try
                         {
                             var (outcome, format) = CheckFile(capturedPath, cancellationToken);

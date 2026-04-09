@@ -30,7 +30,18 @@ public sealed class MainForm : Form
     private TimeSpan _totalDuration;
     private readonly Stopwatch _analysisStopwatch = new();
 
-    private bool _isAnalysing;
+    private enum AnalysisState
+    {
+        Idle,
+        Analysing,
+        Pausing,
+        Paused,
+    }
+
+    private AnalysisState _analysisState = AnalysisState.Idle;
+    private PauseController? _pauseController;
+    private int _startedFiles;
+
     private int _sortColumn = -1;
     private bool _sortAscending = true;
 
@@ -487,7 +498,7 @@ public sealed class MainForm : Form
         _totalBytes = 0;
         _totalDuration = TimeSpan.Zero;
 
-        SetAnalysing(false);
+        SetAnalysisState(AnalysisState.Idle);
         SetStatus("Scanning…");
 
         _ = ScanAsync(paths, _scanCts.Token);
@@ -567,15 +578,31 @@ public sealed class MainForm : Form
 
         UpdateStatusBar();
         UpdateHelpPanel();
-        SetAnalysing(false);
+        SetAnalysisState(AnalysisState.Idle);
     }
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
+        switch (_analysisState)
+        {
+            case AnalysisState.Idle:
+                await StartAnalysisAsync();
+                break;
+            case AnalysisState.Analysing:
+                PauseAnalysis();
+                break;
+            case AnalysisState.Paused:
+                ResumeAnalysis();
+                break;
+        }
+    }
+
+    private async Task StartAnalysisAsync()
+    {
         if (_queuedFiles.Count == 0)
             return;
 
-        SetAnalysing(true);
+        SetAnalysisState(AnalysisState.Analysing);
         _countOk = 0;
         _countMetadata = 0;
         _countIndex = 0;
@@ -584,6 +611,7 @@ public sealed class MainForm : Form
         _countError = 0;
         _totalFiles = _queuedFiles.Count;
         _completedFiles = 0;
+        _startedFiles = 0;
         // Duration is reaccumulated by OnFileCompleted as each checker reports it.
         _totalDuration = TimeSpan.Zero;
         UpdateStatusBar();
@@ -602,10 +630,12 @@ public sealed class MainForm : Form
         ShowGlobalBar(true);
 
         _pipeline = new AnalysisPipeline(_registry);
+        _pipeline.FileStarted += OnFileStarted;
         _pipeline.FileCompleted += OnFileCompleted;
         _pipeline.FileProgressChanged += OnFileProgress;
 
         _analysisCts = new CancellationTokenSource();
+        _pauseController = new PauseController();
 
         var globalProgress = new Progress<int>(completedCount =>
             BeginInvoke(() => _globalBar.Value = Math.Min(completedCount, _totalFiles))
@@ -614,7 +644,12 @@ public sealed class MainForm : Form
         _analysisStopwatch.Restart();
         try
         {
-            await _pipeline.RunAsync(_queuedFiles, _analysisCts.Token, globalProgress);
+            await _pipeline.RunAsync(
+                _queuedFiles,
+                _analysisCts.Token,
+                _pauseController,
+                globalProgress
+            );
             _analysisStopwatch.Stop();
 
             string timeText =
@@ -638,20 +673,64 @@ public sealed class MainForm : Form
         }
         finally
         {
+            _pauseController.Reset();
+            _pauseController = null;
             _analysisCts.Dispose();
             _analysisCts = null;
-            SetAnalysing(false);
+            SetAnalysisState(AnalysisState.Idle);
             ShowGlobalBar(false);
             _ = Task.Run(TrimWorkingSet);
         }
     }
 
+    private void PauseAnalysis()
+    {
+        _pauseController?.Pause();
+        _analysisStopwatch.Stop();
+        SetAnalysisState(AnalysisState.Pausing);
+        RefreshPausingState();
+    }
+
+    private void OnFileStarted(string filePath)
+    {
+        Interlocked.Increment(ref _startedFiles);
+        if (_analysisState == AnalysisState.Pausing)
+            BeginInvoke(RefreshPausingState);
+    }
+
+    private void RefreshPausingState()
+    {
+        if (_analysisState != AnalysisState.Pausing)
+            return;
+        int inFlight = _startedFiles - _completedFiles;
+        if (inFlight <= 0)
+        {
+            SetAnalysisState(AnalysisState.Paused);
+            SetStatus("Paused.");
+        }
+        else
+        {
+            _startButton.Text = $"Waiting ({inFlight})...";
+        }
+    }
+
+    private void ResumeAnalysis()
+    {
+        _analysisStopwatch.Start();
+        SetAnalysisState(AnalysisState.Analysing);
+        SetStatus("");
+        _pauseController?.Resume();
+    }
+
     private void OnCancelClick(object? sender, EventArgs e)
     {
-        if (_isAnalysing)
+        if (_analysisState != AnalysisState.Idle)
         {
             _cancelButton.Enabled = false;
             SetStatus("Cancelling…");
+            // Unblock the pause gate so the cancellation token propagates
+            // through the pipeline loop instead of hanging.
+            _pauseController?.Reset();
             _analysisCts?.Cancel();
         }
         else
@@ -662,6 +741,8 @@ public sealed class MainForm : Form
 
     private void OnClear()
     {
+        _pauseController?.Reset();
+        _pauseController = null;
         _scanCts?.Cancel();
 
         _queuedFiles.Clear();
@@ -681,7 +762,7 @@ public sealed class MainForm : Form
         UpdateStatusBar();
         UpdateHelpPanel();
         SetStatus("");
-        SetAnalysing(false);
+        SetAnalysisState(AnalysisState.Idle);
         TrimWorkingSet();
     }
 
@@ -841,12 +922,23 @@ public sealed class MainForm : Form
             : HelpContent.GetHtml(errorText, positionalInfo);
     }
 
-    private void SetAnalysing(bool active)
+    private void SetAnalysisState(AnalysisState state)
     {
-        _isAnalysing = active;
+        _analysisState = state;
+        bool active = state != AnalysisState.Idle;
         _cancelButton.Text = active ? "Cancel" : "Clear";
         _cancelButton.Enabled = active || _listView.Items.Count > 0;
-        _startButton.Enabled = !active && _queuedFiles.Count > 0;
+        _startButton.Text = state switch
+        {
+            AnalysisState.Analysing => "Pause",
+            AnalysisState.Pausing => $"Waiting ({_startedFiles - _completedFiles})...",
+            AnalysisState.Paused => "Resume",
+            _ => "Start scan",
+        };
+        _startButton.Enabled =
+            state == AnalysisState.Analysing
+            || state == AnalysisState.Paused
+            || (state == AnalysisState.Idle && _queuedFiles.Count > 0);
     }
 
     private void OnFileCompleted(FileCompletedEventArgs args)
@@ -907,6 +999,8 @@ public sealed class MainForm : Form
             // the await continuation will overwrite it with the final summary.
             if (completed < _totalFiles)
                 SetStatus(BuildProgressStatus(completed));
+
+            RefreshPausingState();
         });
     }
 
