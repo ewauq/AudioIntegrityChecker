@@ -6,15 +6,11 @@ Drop a folder or individual files, click **Start scan**, and get a clear report 
 
 ![Screenshot](https://i.imgur.com/uBGczxN.png)
 
----
-
 ## How it works
 
 Audio Integrity Checker loads each file into memory and runs it through its format-specific decoder from start to finish. There is no playback, just a full read of every byte. Any anomaly in the audio data is caught and reported.
 
 Files are processed in parallel across multiple threads (up to 8). On an SSD this makes a noticeable difference, since the bottleneck is pure decoding speed. On a HDD, mechanical seek time between files limits throughput, so a large collection will take longer than on flash storage.
-
----
 
 ## FLAC
 
@@ -22,7 +18,6 @@ Decoding is done via the official [libFLAC](https://xiph.org/flac/) library. Eve
 
 If `libFLAC.dll` is not found next to the exe, the tool automatically falls back to `flac.exe` (searched in the application folder first, then in PATH).
 
----
 
 ## MP3
 
@@ -44,7 +39,6 @@ The entire buffer is fed to mpg123 and fully decoded to PCM. This catches corrup
 
 Pass 2 is skipped if Pass 1 already found an error, since the file is already confirmed corrupt. If `mpg123.dll` is not found next to the exe, Pass 2 is disabled entirely and a warning is shown in the status bar; Pass 1 still runs.
 
----
 
 ## Results
 
@@ -63,7 +57,6 @@ Files of unsupported formats are not listed; they are silently skipped before th
 
 **Keyboard shortcut:** select one or more rows and press **Ctrl+C** to copy them to the clipboard as a JSON array (path, name, duration, format, result, message, error code).
 
----
 
 ## Diagnostics reference
 
@@ -91,7 +84,6 @@ Files of unsupported formats are not listed; they are silently skipped before th
 | `FRAME_CRC_MISMATCH`        | Critical | 1    | A frame's CRC does not match its side information                                       | Bit-level corruption from a bad disk sector, RAM error, or failed transfer                                                                    | **Corrupt**   | Re-download or restore from backup; the damaged frame's audio samples are wrong                                                      |
 | `DECODE_ERROR`              | Critical | 2    | mpg123 reported a decode error (bit reservoir underrun, Huffman decoding failure, etc.) | Corruption that passed the structural scan but breaks actual audio decoding                                                                   | **Corrupt**   | Re-download or restore from backup; re-encoding from a lossless source is the only way to recover clean audio                         |
 
----
 
 ## Supported formats
 
@@ -104,7 +96,7 @@ Files of unsupported formats are not listed; they are silently skipped before th
 | WAV / AIFF | Planned   | —                                        |
 | Opus       | Planned   | —                                        |
 
----
+
 
 ## Requirements
 
@@ -113,7 +105,7 @@ Files of unsupported formats are not listed; they are silently skipped before th
 - `libFLAC.dll` placed next to the exe (or in PATH)
 - `mpg123.dll` placed next to the exe (optional; enables MP3 audio decode in Pass 2)
 
----
+
 
 ## Troubleshooting
 
@@ -123,7 +115,7 @@ This happens when the application is running with elevated privileges (administr
 
 Fix: launch the exe directly by double-clicking it from Explorer, or ensure your terminal is not running as administrator.
 
----
+
 
 **MP3 files are only partially checked — status bar shows `mpg123: not found`**
 
@@ -131,13 +123,13 @@ Pass 2 (full audio decode) requires `mpg123.dll` to be loadable by Windows. With
 
 If the DLL is present but the warning still appears, it may be built for the wrong architecture (32-bit vs 64-bit). This application requires the x64 build.
 
----
+
 
 **FLAC files fail or show an unexpected error — status bar shows `libFLAC: not found`**
 
 If `libFLAC.dll` is missing, the tool falls back to `flac.exe` (searched first next to the exe, then in PATH). If neither is found, FLAC analysis will fail at runtime. Ensure at least one of the two is available.
 
----
+
 
 Suggestions and bug reports are welcome — open an issue or start a discussion.
 
