@@ -386,7 +386,7 @@ public sealed class MainForm : Form
     {
         var prefs = UserPreferences.Load();
 
-        _labelWorkers.Text = $"Workers: {GetEffectiveWorkerCount(prefs)}";
+        _labelWorkers.Text = $"Workers: {GetEffectiveWorkerCount(prefs, StorageKind.Unknown)}";
 
         // Restore window size and position
         if (prefs.WindowWidth > 0 && prefs.WindowHeight > 0)
@@ -603,20 +603,51 @@ public sealed class MainForm : Form
             return;
         }
 
-        var kind = StorageDetector.GetKindForDisk(entries[0].PhysicalDiskNumber);
-        _labelStorage.Text = $"Storage: {FormatStorageKind(kind)}";
+        var info = StorageDetector.GetInfoForDisk(entries[0].PhysicalDiskNumber);
+        _labelStorage.Text = FormatStorageDisplay(info);
         _sepStorage.Visible = true;
         _labelStorage.Visible = true;
+
+        // Automatic mode depends on the detected storage type, so refresh the
+        // Workers label now that we know what disk the queue sits on.
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), info.Kind);
+        _labelWorkers.Text = $"Workers: {workerCount}";
     }
 
-    private static string FormatStorageKind(StorageKind kind) =>
+    private static string FormatStorageDisplay(StorageInfo info)
+    {
+        var parts = new List<string>(4);
+        if (!string.IsNullOrEmpty(info.FriendlyName))
+            parts.Add(info.FriendlyName);
+        if (info.Kind != StorageKind.Unknown)
+            parts.Add(FormatMediaKind(info.Kind));
+        if (!string.IsNullOrEmpty(info.BusDisplay) && info.BusDisplay != "Unknown")
+            parts.Add($"({info.BusDisplay})");
+        if (info.SizeBytes > 0)
+            parts.Add(FormatStorageSize(info.SizeBytes));
+
+        return parts.Count > 0 ? string.Join(" ", parts) : "Storage unknown";
+    }
+
+    private static string FormatMediaKind(StorageKind kind) =>
         kind switch
         {
             StorageKind.Hdd => "HDD",
-            StorageKind.SataSsd => "SATA SSD",
-            StorageKind.Nvme => "NVMe",
-            _ => "Unknown",
+            StorageKind.SataSsd => "SSD",
+            StorageKind.Nvme => "SSD",
+            _ => "",
         };
+
+    private static string FormatStorageSize(long bytes)
+    {
+        const double TB = 1_000_000_000_000.0;
+        const double GB = 1_000_000_000.0;
+        if (bytes >= TB)
+            return $"{bytes / TB:0.#} TB";
+        if (bytes >= GB)
+            return $"{bytes / GB:0.#} GB";
+        return $"{bytes / 1_000_000.0:0.#} MB";
+    }
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
@@ -665,7 +696,7 @@ public sealed class MainForm : Form
         _globalBar.Maximum = _totalFiles;
         ShowGlobalBar(true);
 
-        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load());
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), CurrentStorageKind());
         _labelWorkers.Text = $"Workers: {workerCount}";
 
         _pipeline = new AnalysisPipeline(workerCount);
@@ -862,19 +893,43 @@ public sealed class MainForm : Form
 
     private void OnOptionsApplied()
     {
-        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load());
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), CurrentStorageKind());
         _labelWorkers.Text = $"Workers: {workerCount}";
         // Propagate to a running or paused scan so the change takes effect
         // without requiring a restart of the analysis.
         _pipeline?.AdjustWorkerCount(workerCount);
     }
 
-    // In Automatic mode this currently mirrors the previous hardcoded cap; Phase 4
-    // will replace it with a per-disk matrix (HDD / SATA SSD / NVMe).
-    private static int GetEffectiveWorkerCount(UserPreferences prefs) =>
-        prefs.WorkerCountAuto
-            ? Math.Min(Environment.ProcessorCount, 8)
-            : Math.Clamp(prefs.WorkerCount, 1, Environment.ProcessorCount);
+    /// <summary>
+    /// Best-effort storage kind for the files currently queued. Returns
+    /// <see cref="StorageKind.Unknown"/> when the queue is empty, which maps to
+    /// the conservative default (min(ProcessorCount, 8)).
+    /// </summary>
+    private StorageKind CurrentStorageKind()
+    {
+        if (_queuedFiles.Count == 0)
+            return StorageKind.Unknown;
+        return StorageDetector.GetKindForDisk(_queuedFiles[0].PhysicalDiskNumber);
+    }
+
+    // Per-disk matrix from the plan (Section 4). In Automatic mode the worker
+    // count tracks the storage type; mechanical disks use every core for CPU
+    // decoding (I/O is serialised anyway) while SATA SSDs are capped to avoid
+    // saturating the SATA command queue. Manual mode overrides everything.
+    private static int GetEffectiveWorkerCount(UserPreferences prefs, StorageKind kind)
+    {
+        if (!prefs.WorkerCountAuto)
+            return Math.Clamp(prefs.WorkerCount, 1, Environment.ProcessorCount);
+
+        int processorCount = Environment.ProcessorCount;
+        return kind switch
+        {
+            StorageKind.Hdd => processorCount,
+            StorageKind.Nvme => processorCount,
+            StorageKind.SataSsd => Math.Min(processorCount, 8),
+            _ => Math.Min(processorCount, 8),
+        };
+    }
 
     // -------------------------------------------------------------------------
     // Column header context menu: show/hide optional columns
