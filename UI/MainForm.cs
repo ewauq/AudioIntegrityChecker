@@ -74,11 +74,6 @@ public sealed class MainForm : Form
     private int _countCorruption;
     private int _countError;
 
-    // DLL / binary status (static, set once on startup)
-    private readonly ToolStripStatusLabel _labelLibFlac;
-    private readonly ToolStripStatusLabel _labelMpg123;
-    private readonly ToolStripSeparator _sepDlls;
-
     private const int ColDuration = 2;
     private const int ColFormat = 3;
     private const int ColResult = 4;
@@ -319,12 +314,8 @@ public sealed class MainForm : Form
         _labelRam = new ToolStripStatusLabel(
             $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
         );
-        var sepWorkers = new ToolStripSeparator();
+        var sepRam = new ToolStripSeparator();
         _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
-        _sepDlls = new ToolStripSeparator();
-        _labelLibFlac = new ToolStripStatusLabel();
-        var sepMpg123 = new ToolStripSeparator();
-        _labelMpg123 = new ToolStripStatusLabel();
         var spring = new ToolStripStatusLabel { Spring = true };
 
         _statusStrip = new StatusStrip();
@@ -335,13 +326,9 @@ public sealed class MainForm : Form
             _sepStorage,
             _labelStorage,
             spring,
-            _labelRam,
-            sepWorkers,
             _labelWorkers,
-            _sepDlls,
-            _labelLibFlac,
-            sepMpg123,
-            _labelMpg123,
+            sepRam,
+            _labelRam,
         ]);
 
         _progressBarTimer = new System.Windows.Forms.Timer { Interval = 500 };
@@ -370,10 +357,6 @@ public sealed class MainForm : Form
 
         RegisterCheckers();
 
-        _labelLibFlac.Text =
-            $"libFLAC: {(NativeFlacChecker.IsLibraryAvailable() ? "available" : "not available")}";
-        _labelMpg123.Text =
-            $"mpg123: {(Mp3Mpg123Backend.IsLibraryAvailable() ? "available" : "not available")}";
         // Cancel any in-flight work before the form is destroyed so that mpg123
         // worker calls finish before Shutdown() tears down the native library.
         FormClosing += OnFormClosing;
