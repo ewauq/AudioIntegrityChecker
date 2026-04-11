@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using AudioIntegrityChecker.Core;
+using AudioIntegrityChecker.Pipeline;
 
 namespace AudioIntegrityChecker.Checkers.Flac;
 
@@ -8,9 +9,12 @@ namespace AudioIntegrityChecker.Checkers.Flac;
 /// Verifies FLAC file integrity via P/Invoke against libFLAC.dll.
 ///
 /// Strategy:
-///   1. Load the entire file into a managed byte[] before decoding.
-///      The FLAC decoder reads from that in-memory buffer via callbacks,
-///      zero disk I/O during decode, safe for multithreaded use.
+///   1. Decode runs against a pre-loaded in-memory buffer (either supplied
+///      by the pipeline via <see cref="IBufferedChecker"/> or loaded by the
+///      legacy <see cref="Check(string, CancellationToken, IProgress{FileProgress})"/>
+///      overload). The FLAC decoder reads from that buffer via callbacks, so
+///      there is zero disk I/O during decode and the path is safe for
+///      multithreaded use.
 ///   2. Pre-read STREAMINFO (42 bytes) to obtain total_samples and sample_rate
 ///      before decoder init, so no metadata callback is needed.
 ///   3. Call FLAC__stream_decoder_set_metadata_ignore_all to suppress all
@@ -19,7 +23,7 @@ namespace AudioIntegrityChecker.Checkers.Flac;
 ///      (≤ 100 BeginInvoke calls per file regardless of frame count).
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class NativeFlacChecker : IFormatChecker
+internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
 {
     public string FormatId => "FLAC";
 
@@ -185,10 +189,10 @@ public sealed class NativeFlacChecker : IFormatChecker
                 null
             );
 
-        byte[] fileBuffer;
+        FileBuffer buffer;
         try
         {
-            fileBuffer = File.ReadAllBytes(filePath);
+            buffer = FileBuffer.Load(filePath);
         }
         catch (OutOfMemoryException)
         {
@@ -205,6 +209,32 @@ public sealed class NativeFlacChecker : IFormatChecker
             );
         }
 
+        using (buffer)
+            return DecodeBuffer(buffer.AsArray(), cancellationToken, progress);
+    }
+
+    CheckOutcome IBufferedChecker.CheckWithBuffer(
+        string filePath,
+        FileBuffer buffer,
+        CancellationToken cancellationToken,
+        IProgress<FileProgress> progress
+    )
+    {
+        if (!IsLibraryAvailable())
+            return new CheckOutcome(
+                CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error),
+                null
+            );
+
+        return DecodeBuffer(buffer.AsArray(), cancellationToken, progress);
+    }
+
+    private static CheckOutcome DecodeBuffer(
+        byte[] fileBuffer,
+        CancellationToken cancellationToken,
+        IProgress<FileProgress> progress
+    )
+    {
         // Pre-read STREAMINFO from the buffer, used for progress, timecode, and duration.
         // This avoids needing a metadata callback during decode, and saves a second disk
         // round-trip that would otherwise be required during the scan phase.

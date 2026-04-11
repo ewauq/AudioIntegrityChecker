@@ -150,6 +150,55 @@ public sealed class AnalysisPipeline
             FileProgressChanged?.Invoke(new FileProgressEventArgs(entry.FilePath, fileProgress))
         );
 
+        // Checkers that opt into IBufferedChecker get the file loaded once by
+        // the pipeline. This will matter in later phases when we swap the
+        // backing store for a memory-mapped file or a sequential reader; for
+        // now it already avoids duplicating the File.ReadAllBytes call inside
+        // each checker.
+        if (entry.Checker is IBufferedChecker bufferedChecker)
+        {
+            FileBuffer buffer;
+            try
+            {
+                buffer = FileBuffer.Load(entry.FilePath);
+            }
+            catch (FileNotFoundException)
+            {
+                return new CheckOutcome(
+                    CheckResult.Error("File not found.", CheckCategory.Error),
+                    null
+                );
+            }
+            catch (OutOfMemoryException)
+            {
+                return new CheckOutcome(
+                    CheckResult.Error("File too large to load into memory.", CheckCategory.Error),
+                    null
+                );
+            }
+            catch (Exception ex)
+            {
+                return new CheckOutcome(
+                    CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error),
+                    null
+                );
+            }
+
+            try
+            {
+                return bufferedChecker.CheckWithBuffer(
+                    entry.FilePath,
+                    buffer,
+                    cancellationToken,
+                    progress
+                );
+            }
+            finally
+            {
+                buffer.Dispose();
+            }
+        }
+
         return entry.Checker.Check(entry.FilePath, cancellationToken, progress);
     }
 }
