@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using AudioIntegrityChecker.Core;
+using AudioIntegrityChecker.Pipeline;
 
 namespace AudioIntegrityChecker.Checkers.Mp3;
 
@@ -47,7 +48,7 @@ internal static class Mp3DiagnosticInfo
 }
 
 [SupportedOSPlatform("windows")]
-public sealed class Mp3Checker : IFormatChecker
+internal sealed class Mp3Checker : IFormatChecker, IBufferedChecker
 {
     public string FormatId => "MP3";
 
@@ -63,10 +64,10 @@ public sealed class Mp3Checker : IFormatChecker
                 null
             );
 
-        byte[] buf;
+        FileBuffer buffer;
         try
         {
-            buf = File.ReadAllBytes(filePath);
+            buffer = FileBuffer.Load(filePath);
         }
         catch (OutOfMemoryException)
         {
@@ -83,6 +84,23 @@ public sealed class Mp3Checker : IFormatChecker
             );
         }
 
+        using (buffer)
+            return DecodeBuffer(buffer.AsArray(), ct, progress);
+    }
+
+    CheckOutcome IBufferedChecker.CheckWithBuffer(
+        string filePath,
+        FileBuffer buffer,
+        CancellationToken cancellationToken,
+        IProgress<FileProgress> progress
+    ) => DecodeBuffer(buffer.AsArray(), cancellationToken, progress);
+
+    private static CheckOutcome DecodeBuffer(
+        byte[] buf,
+        CancellationToken ct,
+        IProgress<FileProgress> progress
+    )
+    {
         // Extract duration directly from the in-memory buffer, avoids reopening the
         // file during the scan phase. Computed up front so it is returned even when
         // a later check step errors out.
