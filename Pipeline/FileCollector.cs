@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AudioIntegrityChecker.Core;
 
 namespace AudioIntegrityChecker.Pipeline;
@@ -11,6 +12,11 @@ namespace AudioIntegrityChecker.Pipeline;
 /// peek at metadata is extremely expensive on spinning disks. The duration is
 /// instead extracted by the checker during analysis, when the file is already
 /// loaded into memory.
+///
+/// Roots are grouped by physical disk and walked in parallel across groups.
+/// Inside a disk group, the walk is sequential to avoid head thrashing on HDDs.
+/// HDD groups are sorted by file path after collection so the analysis phase
+/// follows the MFT allocation order, which is close to the physical layout.
 /// </summary>
 internal static class FileCollector
 {
@@ -36,10 +42,6 @@ internal static class FileCollector
     {
         const int ScanProgressInterval = 50;
 
-        var entries = new List<FileEntry>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        int counter = 0;
-
         // Flatten the extension → checker mapping into parallel arrays so the
         // hot walk loop reads them by index instead of hashing strings.
         int extCount = context.SupportedExtensions.Count;
@@ -55,16 +57,40 @@ internal static class FileCollector
             idx++;
         }
 
-        void ReportProgress()
+        // Split the incoming paths into disk groups and standalone files. A
+        // disk number of -1 means the detector could not resolve the volume;
+        // those roots are still grouped together so the walk runs in one shot.
+        var rootsByDisk = new Dictionary<int, List<string>>();
+        var singleFiles = new List<string>();
+        foreach (var rootPath in paths)
         {
-            if (++counter % ScanProgressInterval == 0)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Directory.Exists(rootPath))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                scanProgress?.Report(entries.Count);
+                int disk = StorageDetector.GetPhysicalDiskNumber(rootPath);
+                if (!rootsByDisk.TryGetValue(disk, out var list))
+                {
+                    list = new List<string>();
+                    rootsByDisk[disk] = list;
+                }
+                list.Add(rootPath);
+            }
+            else if (File.Exists(rootPath))
+            {
+                singleFiles.Add(rootPath);
             }
         }
 
-        void Walk(DirectoryInfo dir, string directoryName, int physicalDiskNumber)
+        var seen = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var entriesByDisk = new ConcurrentDictionary<int, List<FileEntry>>();
+        int globalCounter = 0;
+
+        void Walk(
+            DirectoryInfo dir,
+            string directoryName,
+            int physicalDiskNumber,
+            List<FileEntry> bucket
+        )
         {
             for (int i = 0; i < extCount; i++)
             {
@@ -83,11 +109,17 @@ internal static class FileCollector
 
                 foreach (var fi in matches)
                 {
-                    if (!seen.Add(fi.FullName))
+                    if (!seen.TryAdd(fi.FullName, 0))
                         continue;
 
-                    ReportProgress();
-                    entries.Add(
+                    int local = Interlocked.Increment(ref globalCounter);
+                    if (local % ScanProgressInterval == 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        scanProgress?.Report(local);
+                    }
+
+                    bucket.Add(
                         new FileEntry(
                             fi.FullName,
                             directoryName,
@@ -113,60 +145,109 @@ internal static class FileCollector
             foreach (var sub in subdirs)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                Walk(sub, sub.Name, physicalDiskNumber);
+                Walk(sub, sub.Name, physicalDiskNumber, bucket);
             }
         }
 
-        foreach (var rootPath in paths)
+        // Walk disk groups in parallel, one worker per distinct physical disk.
+        // Intra-disk walking stays sequential: a HDD is single-threaded to
+        // avoid head thrashing, and NVMe intra-disk parallelism is deferred.
+        if (rootsByDisk.Count > 0)
+        {
+            var parallelOptions = new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Max(1, rootsByDisk.Count),
+            };
+
+            Parallel.ForEach(
+                rootsByDisk,
+                parallelOptions,
+                kvp =>
+                {
+                    var bucket = new List<FileEntry>();
+                    foreach (var rootPath in kvp.Value)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var rootDir = new DirectoryInfo(rootPath);
+                        Walk(rootDir, rootDir.Name, kvp.Key, bucket);
+                    }
+
+                    // P_B.10: on HDD, sort by path so analysis follows the
+                    // MFT allocation order (roughly the physical layout) and
+                    // the drive head seeks monotonically. Skipped on SSD and
+                    // NVMe where seek time is negligible.
+                    if (StorageDetector.GetKindForDisk(kvp.Key) == StorageKind.Hdd)
+                        bucket.Sort(
+                            (a, b) =>
+                                string.Compare(
+                                    a.FilePath,
+                                    b.FilePath,
+                                    StringComparison.OrdinalIgnoreCase
+                                )
+                        );
+
+                    entriesByDisk[kvp.Key] = bucket;
+                }
+            );
+        }
+
+        // Standalone files: sequential, trivial cost.
+        var singleEntries = new List<FileEntry>();
+        foreach (var filePath in singleFiles)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (Directory.Exists(rootPath))
+            int extIndex = FindExtensionIndex(filePath, patterns);
+            if (extIndex < 0)
+                continue;
+
+            if (!seen.TryAdd(filePath, 0))
+                continue;
+
+            int local = Interlocked.Increment(ref globalCounter);
+            if (local % ScanProgressInterval == 0)
+                scanProgress?.Report(local);
+
+            FileInfo fi;
+            try
             {
-                var rootDir = new DirectoryInfo(rootPath);
-                int physicalDisk = StorageDetector.GetPhysicalDiskNumber(rootPath);
-                Walk(rootDir, rootDir.Name, physicalDisk);
+                fi = new FileInfo(filePath);
             }
-            else if (File.Exists(rootPath))
+            catch
             {
-                int extIndex = FindExtensionIndex(rootPath, patterns);
-                if (extIndex < 0)
-                    continue;
-
-                if (!seen.Add(rootPath))
-                    continue;
-
-                ReportProgress();
-
-                FileInfo fi;
-                try
-                {
-                    fi = new FileInfo(rootPath);
-                }
-                catch
-                {
-                    continue;
-                }
-
-                var directoryName = fi.DirectoryName is { } dirPath
-                    ? Path.GetFileName(dirPath) ?? string.Empty
-                    : string.Empty;
-                int physicalDisk = StorageDetector.GetPhysicalDiskNumber(rootPath);
-
-                entries.Add(
-                    new FileEntry(
-                        fi.FullName,
-                        directoryName,
-                        labels[extIndex],
-                        fi.Length,
-                        physicalDisk,
-                        checkers[extIndex]
-                    )
-                );
+                continue;
             }
+
+            var directoryName = fi.DirectoryName is { } dirPath
+                ? Path.GetFileName(dirPath) ?? string.Empty
+                : string.Empty;
+            int physicalDisk = StorageDetector.GetPhysicalDiskNumber(filePath);
+
+            singleEntries.Add(
+                new FileEntry(
+                    fi.FullName,
+                    directoryName,
+                    labels[extIndex],
+                    fi.Length,
+                    physicalDisk,
+                    checkers[extIndex]
+                )
+            );
         }
 
-        return entries;
+        // Aggregate disk buckets in deterministic order (ascending disk number),
+        // followed by any standalone files.
+        int totalCount = singleEntries.Count;
+        foreach (var bucket in entriesByDisk.Values)
+            totalCount += bucket.Count;
+
+        var result = new List<FileEntry>(totalCount);
+        foreach (var disk in entriesByDisk.Keys.OrderBy(k => k))
+            result.AddRange(entriesByDisk[disk]);
+        result.AddRange(singleEntries);
+
+        return result;
     }
 
     private static int FindExtensionIndex(string filePath, string[] patterns)
