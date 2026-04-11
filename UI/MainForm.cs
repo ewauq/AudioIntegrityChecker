@@ -27,8 +27,6 @@ public sealed class MainForm : Form
     private int _totalFiles;
     private int _completedFiles;
     private long _totalBytes;
-    private TimeSpan _totalDuration;
-    private TimeSpan _totalScannedDuration;
     private readonly Dictionary<string, long> _fileSizes = new(StringComparer.OrdinalIgnoreCase);
     private long _processedBytes;
     private readonly Stopwatch _analysisStopwatch = new();
@@ -58,11 +56,9 @@ public sealed class MainForm : Form
     private readonly StatusStrip _statusStrip;
     private readonly ToolStripStatusLabel _labelFiles;
     private readonly ToolStripStatusLabel _labelSize;
-    private readonly ToolStripStatusLabel _labelDuration;
     private readonly ToolStripStatusLabel _labelRam;
     private readonly ToolStripStatusLabel _labelWorkers;
     private readonly ToolStripSeparator _sepSize;
-    private readonly ToolStripSeparator _sepDuration;
     private readonly System.Windows.Forms.Timer _ramTimer;
     private readonly SplitContainer _splitContainer;
     private readonly HtmlPanel _htmlPanel;
@@ -311,8 +307,6 @@ public sealed class MainForm : Form
         _labelFiles = new ToolStripStatusLabel();
         _sepSize = new ToolStripSeparator { Visible = false };
         _labelSize = new ToolStripStatusLabel { Visible = false };
-        _sepDuration = new ToolStripSeparator { Visible = false };
-        _labelDuration = new ToolStripStatusLabel { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
         _labelRam = new ToolStripStatusLabel(
             $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
@@ -330,8 +324,6 @@ public sealed class MainForm : Form
             _labelFiles,
             _sepSize,
             _labelSize,
-            _sepDuration,
-            _labelDuration,
             spring,
             _labelRam,
             sepWorkers,
@@ -504,8 +496,6 @@ public sealed class MainForm : Form
         _itemByPath.Clear();
         _listView.Items.Clear();
         _totalBytes = 0;
-        _totalDuration = TimeSpan.Zero;
-        _totalScannedDuration = TimeSpan.Zero;
         _fileSizes.Clear();
         _processedBytes = 0;
 
@@ -583,94 +573,12 @@ public sealed class MainForm : Form
         foreach (var entry in entries)
             _fileSizes[entry.FilePath] = entry.Bytes;
 
-        _ = ReadHeaderDurationsAsync(entries, _scanCts!.Token);
-
         int fileCount = _queuedFiles.Count;
         SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
         UpdateStatusBar();
         UpdateHelpPanel();
         SetAnalysisState(AnalysisState.Idle);
-    }
-
-    private async Task ReadHeaderDurationsAsync(
-        IReadOnlyList<FileEntry> entries,
-        CancellationToken ct
-    )
-    {
-        const int FlacBytes = 42;
-        const int Mp3Bytes = 10_240;
-        var flacBuf = new byte[FlacBytes];
-        var mp3Buf = new byte[Mp3Bytes];
-
-        await Task.Run(
-            () =>
-            {
-                foreach (var entry in entries)
-                {
-                    if (ct.IsCancellationRequested)
-                        return;
-
-                    TimeSpan? duration = null;
-                    try
-                    {
-                        if (entry.Format == "FLAC")
-                        {
-                            using var fs = new FileStream(
-                                entry.FilePath,
-                                FileMode.Open,
-                                FileAccess.Read,
-                                FileShare.Read,
-                                bufferSize: 64
-                            );
-                            if (fs.Read(flacBuf, 0, FlacBytes) >= FlacBytes)
-                            {
-                                var (samples, rate) = FlacMetadataReader.TryReadStreamInfo(flacBuf);
-                                if (rate > 0)
-                                    duration = TimeSpan.FromSeconds((double)samples / rate);
-                            }
-                        }
-                        else if (entry.Format == "MP3")
-                        {
-                            using var fs = new FileStream(
-                                entry.FilePath,
-                                FileMode.Open,
-                                FileAccess.Read,
-                                FileShare.Read,
-                                bufferSize: 4096
-                            );
-                            int read = fs.Read(mp3Buf, 0, Mp3Bytes);
-                            if (read > 0)
-                                duration = Mp3MetadataReader.TryReadDurationFromHeader(
-                                    mp3Buf.AsSpan(0, read),
-                                    entry.Bytes
-                                );
-                        }
-                    }
-                    catch
-                    {
-                        // Locked or deleted file — skip silently.
-                    }
-
-                    if (!duration.HasValue)
-                        continue;
-
-                    var d = duration.Value;
-                    var captured = entry;
-                    BeginInvoke(() =>
-                    {
-                        _totalScannedDuration += d;
-                        if (
-                            _itemByPath.TryGetValue(captured.FilePath, out var item)
-                            && string.IsNullOrEmpty(item.SubItems[ColDuration].Text)
-                        )
-                            item.SubItems[ColDuration].Text = FormatTrackDuration(d);
-                        UpdateStatusBar();
-                    });
-                }
-            },
-            ct
-        );
     }
 
     private async void OnStartClick(object? sender, EventArgs e)
@@ -705,8 +613,6 @@ public sealed class MainForm : Form
         _completedFiles = 0;
         _startedFiles = 0;
         _processedBytes = 0;
-        // Duration is reaccumulated by OnFileCompleted as each checker reports it.
-        _totalDuration = TimeSpan.Zero;
         UpdateStatusBar();
 
         foreach (ListViewItem item in _listView.Items)
@@ -842,8 +748,6 @@ public sealed class MainForm : Form
         _itemByPath.Clear();
         _listView.Items.Clear();
         _totalBytes = 0;
-        _totalDuration = TimeSpan.Zero;
-        _totalScannedDuration = TimeSpan.Zero;
         _fileSizes.Clear();
         _processedBytes = 0;
         _totalFiles = 0;
@@ -1077,13 +981,9 @@ public sealed class MainForm : Form
             var severity = ResultFormatting.GetSeverity(result.Category);
             var color = ResultFormatting.GetSeverityColor(severity);
 
-            // Duration is now extracted by the checker (from the in-memory buffer it
-            // already loaded), so we populate the column and total here (after scan).
+            // Duration comes from the checker's in-memory buffer, populated per row.
             if (args.Duration.HasValue)
-            {
                 item.SubItems[ColDuration].Text = FormatTrackDuration(args.Duration);
-                _totalDuration += args.Duration.Value;
-            }
 
             item.SubItems[ColResult].Text = isOk ? "OK" : "ISSUE";
             item.SubItems[ColSeverity].Text =
@@ -1219,23 +1119,11 @@ public sealed class MainForm : Form
         int fileCount = _queuedFiles.Count;
         _labelFiles.Text = $"{fileCount} file{(fileCount == 1 ? "" : "s")}";
 
-        // Show exact analyzed duration when available; fall back to header-estimated
-        // total during the scan phase (before any analysis has started).
-        var displayDuration =
-            _totalDuration > TimeSpan.Zero ? _totalDuration : _totalScannedDuration;
-
         bool hasSize = _totalBytes > 0;
-        bool hasDuration = displayDuration > TimeSpan.Zero;
-
         _sepSize.Visible = hasSize;
         _labelSize.Visible = hasSize;
         if (hasSize)
             _labelSize.Text = FormatBytes(_totalBytes);
-
-        _sepDuration.Visible = hasDuration;
-        _labelDuration.Visible = hasDuration;
-        if (hasDuration)
-            _labelDuration.Text = FormatDuration(displayDuration);
     }
 
     // -------------------------------------------------------------------------
@@ -1276,15 +1164,6 @@ public sealed class MainForm : Form
             : $"{(int)d.TotalMinutes}:{d.Seconds:D2}";
     }
 
-    private static string FormatDuration(TimeSpan duration)
-    {
-        if (duration.TotalHours >= 1)
-            return $"{(int)duration.TotalHours}h {duration.Minutes:D2}m {duration.Seconds:D2}s";
-        if (duration.TotalMinutes >= 1)
-            return $"{(int)duration.TotalMinutes}m {duration.Seconds:D2}s";
-        return $"{duration.Seconds}s";
-    }
-
     private void OnProgressBarTick(object? sender, EventArgs e)
     {
         if (_globalBar.Style == ProgressBarStyle.Marquee)
@@ -1310,18 +1189,7 @@ public sealed class MainForm : Form
         if (elapsed.TotalSeconds < 3.0 || _completedFiles < 5)
             return "--:--:--";
 
-        // Priority 1: audio-duration rate — accounts for variable file lengths.
-        double scannedSec = _totalScannedDuration.TotalSeconds;
-        double analyzedSec = _totalDuration.TotalSeconds;
-        if (scannedSec > 0 && analyzedSec > 0)
-        {
-            double rate = analyzedSec / elapsed.TotalSeconds;
-            double remaining = scannedSec - analyzedSec;
-            if (remaining > 0 && rate > 0)
-                return TimeSpan.FromSeconds(remaining / rate).ToString(@"hh\:mm\:ss");
-        }
-
-        // Priority 2: bytes rate.
+        // Priority 1: bytes rate — more accurate than file count for variable sizes.
         long processed = Interlocked.Read(ref _processedBytes);
         if (processed > 0 && _totalBytes > processed)
         {
@@ -1329,7 +1197,7 @@ public sealed class MainForm : Form
             return TimeSpan.FromSeconds((_totalBytes - processed) / rate).ToString(@"hh\:mm\:ss");
         }
 
-        // Priority 3: file count (fallback).
+        // Priority 2: file count (fallback).
         if (_completedFiles > 0)
         {
             double rate = _completedFiles / elapsed.TotalSeconds;
