@@ -95,6 +95,17 @@ public sealed class NativeFlacChecker : IFormatChecker
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void ErrorCallback(IntPtr decoder, int status, IntPtr clientData);
 
+    // Cached delegate instances: the callbacks have no captured state (context is
+    // read from client_data), so the same delegate is reused for every decode and
+    // marshalling allocates only once per process instead of once per file.
+    private static readonly ReadCallback s_readCallback = OnRead;
+    private static readonly SeekCallback s_seekCallback = OnSeek;
+    private static readonly TellCallback s_tellCallback = OnTell;
+    private static readonly LengthCallback s_lengthCallback = OnLength;
+    private static readonly EofCallback s_eofCallback = OnEof;
+    private static readonly WriteCallback s_writeCallback = OnWrite;
+    private static readonly ErrorCallback s_errorCallback = OnError;
+
     // -------------------------------------------------------------------------
     // FLAC__FrameHeader layout (partial, only fields we read)
     // -------------------------------------------------------------------------
@@ -227,27 +238,18 @@ public sealed class NativeFlacChecker : IFormatChecker
             // Suppress all metadata callbacks: we pre-read what we need.
             FLAC__stream_decoder_set_metadata_ignore_all(decoder);
 
-            // Keep delegate instances alive for the full duration of decode.
-            ReadCallback readCallback = OnRead;
-            SeekCallback seekCallback = OnSeek;
-            TellCallback tellCallback = OnTell;
-            LengthCallback lengthCallback = OnLength;
-            EofCallback eofCallback = OnEof;
-            WriteCallback writeCallback = OnWrite;
-            ErrorCallback errorCallback = OnError;
-
             var clientData = GCHandle.ToIntPtr(gcHandle);
 
             int initStatus = FLAC__stream_decoder_init_stream(
                 decoder,
-                readCallback,
-                seekCallback,
-                tellCallback,
-                lengthCallback,
-                eofCallback,
-                writeCallback,
+                s_readCallback,
+                s_seekCallback,
+                s_tellCallback,
+                s_lengthCallback,
+                s_eofCallback,
+                s_writeCallback,
                 IntPtr.Zero,
-                errorCallback,
+                s_errorCallback,
                 clientData
             );
 

@@ -8,21 +8,19 @@ namespace AudioIntegrityChecker.Pipeline;
 /// </summary>
 public sealed class AnalysisPipeline
 {
-    private readonly CheckerRegistry _registry;
     private readonly int _workerCount;
 
     public event Action<string>? FileStarted;
     public event Action<FileCompletedEventArgs>? FileCompleted;
     public event Action<FileProgressEventArgs>? FileProgressChanged;
 
-    public AnalysisPipeline(CheckerRegistry registry)
+    public AnalysisPipeline()
     {
-        _registry = registry;
         _workerCount = Math.Min(Environment.ProcessorCount, 8);
     }
 
-    public async Task RunAsync(
-        IReadOnlyList<string> filePaths,
+    internal async Task RunAsync(
+        IReadOnlyList<FileEntry> entries,
         CancellationToken cancellationToken,
         PauseController? pauseController = null,
         IProgress<int>? globalProgress = null
@@ -30,30 +28,30 @@ public sealed class AnalysisPipeline
     {
         int completedCount = 0;
         using var semaphore = new SemaphoreSlim(_workerCount, _workerCount);
-        var tasks = new List<Task>(filePaths.Count);
+        var tasks = new List<Task>(entries.Count);
 
-        foreach (var filePath in filePaths)
+        foreach (var entry in entries)
         {
             if (pauseController is not null)
                 await pauseController.WaitIfPausedAsync(cancellationToken).ConfigureAwait(false);
 
             await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-            var capturedPath = filePath;
+            var capturedEntry = entry;
             tasks.Add(
                 Task.Run(
                     () =>
                     {
-                        FileStarted?.Invoke(capturedPath);
+                        FileStarted?.Invoke(capturedEntry.FilePath);
                         try
                         {
-                            var (outcome, format) = CheckFile(capturedPath, cancellationToken);
+                            var outcome = CheckFile(capturedEntry, cancellationToken);
                             int count = Interlocked.Increment(ref completedCount);
                             globalProgress?.Report(count);
                             FileCompleted?.Invoke(
                                 new FileCompletedEventArgs(
-                                    capturedPath,
-                                    format,
+                                    capturedEntry.FilePath,
+                                    capturedEntry.Format,
                                     outcome.Result,
                                     outcome.Duration
                                 )
@@ -72,31 +70,13 @@ public sealed class AnalysisPipeline
         await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
-    private (CheckOutcome Outcome, string Format) CheckFile(
-        string filePath,
-        CancellationToken cancellationToken
-    )
+    private CheckOutcome CheckFile(FileEntry entry, CancellationToken cancellationToken)
     {
-        var checker = _registry.Resolve(filePath);
-        if (checker is null)
-        {
-            // Should not happen: unsupported files are filtered out before queuing.
-            var extension = Path.GetExtension(filePath).TrimStart('.');
-            return (
-                new CheckOutcome(
-                    CheckResult.Error($"Unrecognized format: .{extension}", CheckCategory.Error),
-                    null
-                ),
-                extension.ToUpperInvariant()
-            );
-        }
-
         var progress = new Progress<FileProgress>(fileProgress =>
-            FileProgressChanged?.Invoke(new FileProgressEventArgs(filePath, fileProgress))
+            FileProgressChanged?.Invoke(new FileProgressEventArgs(entry.FilePath, fileProgress))
         );
 
-        var outcome = checker.Check(filePath, cancellationToken, progress);
-        return (outcome, checker.FormatId);
+        return entry.Checker.Check(entry.FilePath, cancellationToken, progress);
     }
 }
 

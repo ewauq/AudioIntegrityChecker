@@ -7,6 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TieredPGO>true</TieredPGO>
     <AssemblyName>AudioIntegrityChecker</AssemblyName>
     <RootNamespace>AudioIntegrityChecker</RootNamespace>
     <Version>1.2.0</Version>

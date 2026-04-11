@@ -19,7 +19,7 @@ public sealed class MainForm : Form
     private AnalysisPipeline? _pipeline;
     private CancellationTokenSource? _analysisCts;
     private CancellationTokenSource? _scanCts;
-    private readonly List<string> _queuedFiles = [];
+    private readonly List<FileEntry> _queuedFiles = [];
     private readonly Dictionary<string, ListViewItem> _itemByPath = new(
         StringComparer.OrdinalIgnoreCase
     );
@@ -523,9 +523,7 @@ public sealed class MainForm : Form
         List<FileEntry> entries;
         try
         {
-            var supportedExtensions = _registry.SupportedExtensions.ToHashSet(
-                StringComparer.OrdinalIgnoreCase
-            );
+            var scanContext = ScanContext.Create(_registry);
 
             var scanProgress = new Progress<int>(count =>
                 SetStatus($"Scanning… {count} file{(count == 1 ? "" : "s")} found")
@@ -535,7 +533,7 @@ public sealed class MainForm : Form
                 () =>
                     FileCollector.Collect(
                         droppedPaths,
-                        supportedExtensions,
+                        scanContext,
                         cancellationToken,
                         scanProgress
                     ),
@@ -559,7 +557,6 @@ public sealed class MainForm : Form
         _listView.BeginUpdate();
         foreach (var entry in entries)
         {
-            var format = _registry.Resolve(entry.FilePath)?.FormatId ?? entry.Format;
             var item = new ListViewItem(entry.DirectoryName)
             {
                 ToolTipText = entry.FilePath,
@@ -569,13 +566,13 @@ public sealed class MainForm : Form
             // Duration is populated later by the checker (see OnFileCompleted). Scanning
             // no longer opens each file a second time to peek at metadata.
             item.SubItems.Add("");
-            item.SubItems.Add(format);
+            item.SubItems.Add(entry.Checker.FormatId);
             item.SubItems.Add(""); // Result
             item.SubItems.Add(""); // Severity
             item.SubItems.Add(""); // Message
             item.SubItems.Add(""); // Error
 
-            _queuedFiles.Add(entry.FilePath);
+            _queuedFiles.Add(entry);
             _itemByPath[entry.FilePath] = item;
             _totalBytes += entry.Bytes;
 
@@ -725,7 +722,7 @@ public sealed class MainForm : Form
         _globalBar.Maximum = _totalFiles;
         ShowGlobalBar(true);
 
-        _pipeline = new AnalysisPipeline(_registry);
+        _pipeline = new AnalysisPipeline();
         _pipeline.FileStarted += OnFileStarted;
         _pipeline.FileCompleted += OnFileCompleted;
         _pipeline.FileProgressChanged += OnFileProgress;

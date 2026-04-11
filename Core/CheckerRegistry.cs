@@ -65,4 +65,6 @@ public sealed class CheckerRegistry
     }
 
     public IEnumerable<string> SupportedExtensions => _checkersByExtension.Keys;
+
+    public IReadOnlyDictionary<string, IFormatChecker> CheckersByExtension => _checkersByExtension;
 }

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
@@ -81,22 +82,37 @@ internal static class Mp3Mpg123Backend
 
             Mp3NativeMethods.mpg123_feed(mh, fileBuffer, (nuint)fileBuffer.Length);
 
-            var outBuf = new byte[MaxDecodedFrameBytes];
-            while (true)
+            var outBuf = ArrayPool<byte>.Shared.Rent(MaxDecodedFrameBytes);
+            try
             {
-                rc = Mp3NativeMethods.mpg123_read(mh, outBuf, (nuint)outBuf.Length, out _);
-
-                if (rc == Mp3NativeMethods.MPG123_DONE)
-                    break;
-                if (rc == Mp3NativeMethods.MPG123_OK || rc == Mp3NativeMethods.MPG123_NEW_FORMAT)
-                    continue;
-                if (rc == Mp3NativeMethods.MPG123_ERR)
+                while (true)
                 {
-                    diagnostics.Add((Mp3Diagnostic.DECODE_ERROR, 0));
+                    rc = Mp3NativeMethods.mpg123_read(
+                        mh,
+                        outBuf,
+                        (nuint)MaxDecodedFrameBytes,
+                        out _
+                    );
+
+                    if (rc == Mp3NativeMethods.MPG123_DONE)
+                        break;
+                    if (
+                        rc == Mp3NativeMethods.MPG123_OK
+                        || rc == Mp3NativeMethods.MPG123_NEW_FORMAT
+                    )
+                        continue;
+                    if (rc == Mp3NativeMethods.MPG123_ERR)
+                    {
+                        diagnostics.Add((Mp3Diagnostic.DECODE_ERROR, 0));
+                        break;
+                    }
+                    // MPG123_NEED_MORE: all data already fed, treat as end of stream
                     break;
                 }
-                // MPG123_NEED_MORE: all data already fed, treat as end of stream
-                break;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(outBuf);
             }
         }
         finally
