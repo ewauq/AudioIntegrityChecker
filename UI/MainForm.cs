@@ -58,7 +58,9 @@ public sealed class MainForm : Form
     private readonly ToolStripStatusLabel _labelSize;
     private readonly ToolStripStatusLabel _labelRam;
     private readonly ToolStripStatusLabel _labelWorkers;
+    private readonly ToolStripStatusLabel _labelStorage;
     private readonly ToolStripSeparator _sepSize;
+    private readonly ToolStripSeparator _sepStorage;
     private readonly System.Windows.Forms.Timer _ramTimer;
     private readonly SplitContainer _splitContainer;
     private readonly HtmlPanel _htmlPanel;
@@ -298,8 +300,12 @@ public sealed class MainForm : Form
             menuAutoResize,
         ]);
 
+        var menuTools = new ToolStripMenuItem("&Tools");
+        var menuOptions = new ToolStripMenuItem("&Options…", null, OnMenuOptions);
+        menuTools.DropDownItems.Add(menuOptions);
+
         _menuStrip = new MenuStrip();
-        _menuStrip.Items.AddRange([menuFile, menuView]);
+        _menuStrip.Items.AddRange([menuFile, menuView, menuTools]);
 
         // ---- Column header context menu ----
         BuildColumnHeaderContextMenu();
@@ -307,6 +313,8 @@ public sealed class MainForm : Form
         _labelFiles = new ToolStripStatusLabel();
         _sepSize = new ToolStripSeparator { Visible = false };
         _labelSize = new ToolStripStatusLabel { Visible = false };
+        _sepStorage = new ToolStripSeparator { Visible = false };
+        _labelStorage = new ToolStripStatusLabel { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
         _labelRam = new ToolStripStatusLabel(
             $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
@@ -324,6 +332,8 @@ public sealed class MainForm : Form
             _labelFiles,
             _sepSize,
             _labelSize,
+            _sepStorage,
+            _labelStorage,
             spring,
             _labelRam,
             sepWorkers,
@@ -375,6 +385,8 @@ public sealed class MainForm : Form
     private void OnFormLoad(object? sender, EventArgs e)
     {
         var prefs = UserPreferences.Load();
+
+        _labelWorkers.Text = $"Workers: {GetEffectiveWorkerCount(prefs)}";
 
         // Restore window size and position
         if (prefs.WindowWidth > 0 && prefs.WindowHeight > 0)
@@ -576,10 +588,35 @@ public sealed class MainForm : Form
         int fileCount = _queuedFiles.Count;
         SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
+        UpdateStorageIndicator(entries);
         UpdateStatusBar();
         UpdateHelpPanel();
         SetAnalysisState(AnalysisState.Idle);
     }
+
+    private void UpdateStorageIndicator(IReadOnlyList<FileEntry> entries)
+    {
+        if (entries.Count == 0)
+        {
+            _sepStorage.Visible = false;
+            _labelStorage.Visible = false;
+            return;
+        }
+
+        var kind = StorageDetector.GetKindForDisk(entries[0].PhysicalDiskNumber);
+        _labelStorage.Text = $"Storage: {FormatStorageKind(kind)}";
+        _sepStorage.Visible = true;
+        _labelStorage.Visible = true;
+    }
+
+    private static string FormatStorageKind(StorageKind kind) =>
+        kind switch
+        {
+            StorageKind.Hdd => "HDD",
+            StorageKind.SataSsd => "SATA SSD",
+            StorageKind.Nvme => "NVMe",
+            _ => "Unknown",
+        };
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
@@ -628,7 +665,10 @@ public sealed class MainForm : Form
         _globalBar.Maximum = _totalFiles;
         ShowGlobalBar(true);
 
-        _pipeline = new AnalysisPipeline();
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load());
+        _labelWorkers.Text = $"Workers: {workerCount}";
+
+        _pipeline = new AnalysisPipeline(workerCount);
         _pipeline.FileStarted += OnFileStarted;
         _pipeline.FileCompleted += OnFileCompleted;
         _pipeline.FileProgressChanged += OnFileProgress;
@@ -759,6 +799,9 @@ public sealed class MainForm : Form
         _countCorruption = 0;
         _countError = 0;
 
+        _sepStorage.Visible = false;
+        _labelStorage.Visible = false;
+
         UpdateStatusBar();
         UpdateHelpPanel();
         SetStatus("");
@@ -808,6 +851,30 @@ public sealed class MainForm : Form
     {
         _listView.AutoResizeColumns(ColumnHeaderAutoResizeStyle.ColumnContent);
     }
+
+    private void OnMenuOptions(object? sender, EventArgs e)
+    {
+        var prefs = UserPreferences.Load();
+        using var dialog = new OptionsForm(prefs);
+        dialog.SettingsApplied += OnOptionsApplied;
+        dialog.ShowDialog(this);
+    }
+
+    private void OnOptionsApplied()
+    {
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load());
+        _labelWorkers.Text = $"Workers: {workerCount}";
+        // Propagate to a running or paused scan so the change takes effect
+        // without requiring a restart of the analysis.
+        _pipeline?.AdjustWorkerCount(workerCount);
+    }
+
+    // In Automatic mode this currently mirrors the previous hardcoded cap; Phase 4
+    // will replace it with a per-disk matrix (HDD / SATA SSD / NVMe).
+    private static int GetEffectiveWorkerCount(UserPreferences prefs) =>
+        prefs.WorkerCountAuto
+            ? Math.Min(Environment.ProcessorCount, 8)
+            : Math.Clamp(prefs.WorkerCount, 1, Environment.ProcessorCount);
 
     // -------------------------------------------------------------------------
     // Column header context menu: show/hide optional columns

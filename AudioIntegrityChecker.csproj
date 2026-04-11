@@ -20,4 +20,7 @@
   <ItemGroup>
     <PackageReference Include="HtmlRenderer.WinForms" Version="1.5.2" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="UI\Icons\*.png" />
+  </ItemGroup>
 </Project>
