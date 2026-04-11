@@ -61,11 +61,16 @@ internal static class Mp3Mpg123Backend
     }
 
     /// <summary>
-    /// Decodes the file buffer via mpg123 and returns a list of diagnostics.
-    /// Returns <see langword="null"/> if the decoder handle could not be created or opened,
-    /// indicating an infrastructure failure rather than a file problem.
+    /// Decodes a pre-loaded file buffer via mpg123 and returns a list of
+    /// diagnostics. The input is passed as a raw pointer + length so the call
+    /// works uniformly for pinned managed arrays and memory-mapped views.
+    /// Returns <see langword="null"/> if the decoder handle could not be created
+    /// or opened, indicating an infrastructure failure rather than a file problem.
     /// </summary>
-    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)>? Decode(byte[] fileBuffer)
+    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)>? Decode(
+        IntPtr data,
+        int length
+    )
     {
         var diagnostics = new List<(Mp3Diagnostic, long)>();
 
@@ -80,7 +85,7 @@ internal static class Mp3Mpg123Backend
             if (rc != Mp3NativeMethods.MPG123_OK)
                 return null;
 
-            Mp3NativeMethods.mpg123_feed(mh, fileBuffer, (nuint)fileBuffer.Length);
+            Mp3NativeMethods.mpg123_feed(mh, data, (nuint)length);
 
             var outBuf = ArrayPool<byte>.Shared.Rent(MaxDecodedFrameBytes);
             try

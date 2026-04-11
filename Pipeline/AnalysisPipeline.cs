@@ -204,6 +204,30 @@ public sealed class AnalysisPipeline
         }
     }
 
+    private static FileBuffer LoadBuffer(FileEntry entry, IBufferedChecker checker)
+    {
+        if (checker.SupportsMemoryMappedBuffer && IsMappableDisk(entry.PhysicalDiskNumber))
+        {
+            try
+            {
+                return FileBuffer.MemoryMap(entry.FilePath);
+            }
+            catch
+            {
+                // Fall back to managed load if the OS refuses the mapping
+                // (e.g. empty file, permission quirks). The checker still
+                // works from a pinned byte[] in that case.
+            }
+        }
+        return FileBuffer.Load(entry.FilePath);
+    }
+
+    private static bool IsMappableDisk(int physicalDiskNumber)
+    {
+        var kind = StorageDetector.GetKindForDisk(physicalDiskNumber);
+        return kind == StorageKind.SataSsd || kind == StorageKind.Nvme;
+    }
+
     private async Task RunHddStrategyAsync(
         IReadOnlyList<FileEntry> entries,
         CancellationToken cancellationToken,
@@ -247,11 +271,13 @@ public sealed class AnalysisPipeline
                         // Only checkers that opt into IBufferedChecker benefit
                         // from prefetching; fallback checkers (e.g. ProcessFlac)
                         // still use their own legacy path and skip the load.
-                        if (entry.Checker is IBufferedChecker)
+                        // HDD reader always uses the managed load path because
+                        // LoadBuffer's IsMappableDisk rules out HDD.
+                        if (entry.Checker is IBufferedChecker bufferedChecker)
                         {
                             try
                             {
-                                buffer = FileBuffer.Load(entry.FilePath);
+                                buffer = LoadBuffer(entry, bufferedChecker);
                             }
                             catch (Exception ex)
                             {
@@ -363,7 +389,7 @@ public sealed class AnalysisPipeline
             FileBuffer buffer;
             try
             {
-                buffer = FileBuffer.Load(entry.FilePath);
+                buffer = LoadBuffer(entry, bufferedChecker);
             }
             catch (Exception ex)
             {

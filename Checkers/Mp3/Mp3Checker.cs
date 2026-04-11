@@ -52,6 +52,8 @@ internal sealed class Mp3Checker : IFormatChecker, IBufferedChecker
 {
     public string FormatId => "MP3";
 
+    bool IBufferedChecker.SupportsMemoryMappedBuffer => true;
+
     public CheckOutcome Check(
         string filePath,
         CancellationToken ct,
@@ -85,7 +87,7 @@ internal sealed class Mp3Checker : IFormatChecker, IBufferedChecker
         }
 
         using (buffer)
-            return DecodeBuffer(buffer.AsArray(), ct, progress);
+            return DecodeBuffer(buffer, ct, progress);
     }
 
     CheckOutcome IBufferedChecker.CheckWithBuffer(
@@ -93,25 +95,27 @@ internal sealed class Mp3Checker : IFormatChecker, IBufferedChecker
         FileBuffer buffer,
         CancellationToken cancellationToken,
         IProgress<FileProgress> progress
-    ) => DecodeBuffer(buffer.AsArray(), cancellationToken, progress);
+    ) => DecodeBuffer(buffer, cancellationToken, progress);
 
     private static CheckOutcome DecodeBuffer(
-        byte[] buf,
+        FileBuffer buffer,
         CancellationToken ct,
         IProgress<FileProgress> progress
     )
     {
+        var span = buffer.AsSpan();
+
         // Extract duration directly from the in-memory buffer, avoids reopening the
         // file during the scan phase. Computed up front so it is returned even when
         // a later check step errors out.
-        TimeSpan? duration = Mp3MetadataReader.TryReadDuration(buf);
+        TimeSpan? duration = Mp3MetadataReader.TryReadDuration(span);
 
         progress.Report(0.10f);
         if (ct.IsCancellationRequested)
             return new CheckOutcome(CheckResult.Error("Cancelled.", CheckCategory.Error), duration);
 
         // Pass 1: structural parser (pure C#, no DLL)
-        var pass1 = Mp3StructuralParser.Scan(buf);
+        var pass1 = Mp3StructuralParser.Scan(span);
         progress.Report(0.50f);
         if (ct.IsCancellationRequested)
             return new CheckOutcome(CheckResult.Error("Cancelled.", CheckCategory.Error), duration);
@@ -124,7 +128,7 @@ internal sealed class Mp3Checker : IFormatChecker, IBufferedChecker
         List<(Mp3Diagnostic Diagnostic, long FrameIndex)> pass2 = [];
         if (Mp3Mpg123Backend.IsLibraryAvailable() && Mp3Mpg123Backend.TryInitialize())
         {
-            var decodeResult = Mp3Mpg123Backend.Decode(buf);
+            var decodeResult = Mp3Mpg123Backend.Decode(buffer.Pointer, buffer.Length);
             if (decodeResult is null)
                 return new CheckOutcome(
                     CheckResult.Error("mpg123: failed to initialize decoder.", CheckCategory.Error),

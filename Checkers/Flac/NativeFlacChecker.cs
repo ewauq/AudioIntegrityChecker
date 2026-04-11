@@ -152,7 +152,10 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
 
     private sealed class DecodeState
     {
-        public required byte[] FileBuffer;
+        // Raw pointer to the file contents. Works uniformly for a pinned
+        // managed byte[] and a memory-mapped view base address.
+        public IntPtr DataPtr;
+        public int DataLength;
         public int BufferPosition;
 
         public ulong TotalSamples;
@@ -170,6 +173,8 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         public IProgress<FileProgress>? Progress;
         public bool Cancelled;
     }
+
+    bool IBufferedChecker.SupportsMemoryMappedBuffer => true;
 
     public CheckOutcome Check(
         string filePath,
@@ -210,7 +215,7 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         }
 
         using (buffer)
-            return DecodeBuffer(buffer.AsArray(), cancellationToken, progress);
+            return DecodeBuffer(buffer, cancellationToken, progress);
     }
 
     CheckOutcome IBufferedChecker.CheckWithBuffer(
@@ -226,11 +231,11 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
                 null
             );
 
-        return DecodeBuffer(buffer.AsArray(), cancellationToken, progress);
+        return DecodeBuffer(buffer, cancellationToken, progress);
     }
 
     private static CheckOutcome DecodeBuffer(
-        byte[] fileBuffer,
+        FileBuffer buffer,
         CancellationToken cancellationToken,
         IProgress<FileProgress> progress
     )
@@ -238,7 +243,7 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         // Pre-read STREAMINFO from the buffer, used for progress, timecode, and duration.
         // This avoids needing a metadata callback during decode, and saves a second disk
         // round-trip that would otherwise be required during the scan phase.
-        var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(fileBuffer);
+        var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(buffer.AsSpan());
         TimeSpan? duration =
             totalSamples > 0 && sampleRate > 0
                 ? TimeSpan.FromSeconds((double)totalSamples / sampleRate)
@@ -246,7 +251,8 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
 
         var state = new DecodeState
         {
-            FileBuffer = fileBuffer,
+            DataPtr = buffer.Pointer,
+            DataLength = buffer.Length,
             TotalSamples = totalSamples,
             SampleRate = sampleRate,
             CancellationToken = cancellationToken,
@@ -357,7 +363,7 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         }
     }
 
-    private static int OnRead(
+    private static unsafe int OnRead(
         IntPtr decoder,
         IntPtr buffer,
         ref UIntPtr byteCount,
@@ -366,7 +372,7 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
         int requested = (int)(ulong)byteCount;
-        int remaining = state.FileBuffer.Length - state.BufferPosition;
+        int remaining = state.DataLength - state.BufferPosition;
 
         if (remaining <= 0)
         {
@@ -375,7 +381,12 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         }
 
         int toRead = Math.Min(requested, remaining);
-        Marshal.Copy(state.FileBuffer, state.BufferPosition, buffer, toRead);
+        Buffer.MemoryCopy(
+            (byte*)state.DataPtr + state.BufferPosition,
+            (byte*)buffer,
+            toRead,
+            toRead
+        );
         state.BufferPosition += toRead;
         byteCount = (UIntPtr)(uint)toRead;
         return 0; // CONTINUE
@@ -384,7 +395,7 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
     private static int OnSeek(IntPtr decoder, ulong offset, IntPtr clientData)
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
-        if (offset > (ulong)state.FileBuffer.Length)
+        if (offset > (ulong)state.DataLength)
             return 1; // ERROR
         state.BufferPosition = (int)offset;
         return 0;
@@ -400,14 +411,14 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
     private static int OnLength(IntPtr decoder, ref ulong streamLength, IntPtr clientData)
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
-        streamLength = (ulong)state.FileBuffer.Length;
+        streamLength = (ulong)state.DataLength;
         return 0;
     }
 
     private static bool OnEof(IntPtr decoder, IntPtr clientData)
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
-        return state.BufferPosition >= state.FileBuffer.Length;
+        return state.BufferPosition >= state.DataLength;
     }
 
     private static int OnWrite(IntPtr decoder, IntPtr framePtr, IntPtr samples, IntPtr clientData)
