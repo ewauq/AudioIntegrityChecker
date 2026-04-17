@@ -6,26 +6,19 @@ using AudioIntegrityChecker.Pipeline;
 namespace AudioIntegrityChecker.Checkers.Flac;
 
 /// <summary>
-/// Verifies FLAC file integrity via P/Invoke against libFLAC.dll.
-///
-/// Strategy:
-///   1. Decode runs against a pre-loaded in-memory buffer (either supplied
-///      by the pipeline via <see cref="IBufferedChecker"/> or loaded by the
-///      legacy <see cref="Check(string, CancellationToken, IProgress{FileProgress})"/>
-///      overload). The FLAC decoder reads from that buffer via callbacks, so
-///      there is zero disk I/O during decode and the path is safe for
-///      multithreaded use.
-///   2. Pre-read STREAMINFO (42 bytes) to obtain total_samples and sample_rate
-///      before decoder init, so no metadata callback is needed.
-///   3. Call FLAC__stream_decoder_set_metadata_ignore_all to suppress all
-///      metadata callbacks (avoids parsing large cover art / Vorbis comments).
-///   4. Rate-limit progress reports to at most one per integer-percent change
-///      (≤ 100 BeginInvoke calls per file regardless of frame count).
+/// Verifies FLAC file integrity via P/Invoke against libFLAC.dll. Decode
+/// runs against a pre-loaded <see cref="FileBuffer"/> so the file is read
+/// exactly once. STREAMINFO is parsed from the same buffer before decoder
+/// init, and all other metadata callbacks are suppressed via
+/// FLAC__stream_decoder_set_metadata_ignore_all. Progress reports are
+/// rate-limited to one per integer percent.
 /// </summary>
 [SupportedOSPlatform("windows")]
-internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
+internal sealed class NativeFlacChecker : IFormatChecker
 {
     public string FormatId => "FLAC";
+
+    public bool SupportsMemoryMappedBuffer => true;
 
     private const string LibFlac = "libFLAC.dll";
 
@@ -110,10 +103,6 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
     private static readonly WriteCallback s_writeCallback = OnWrite;
     private static readonly ErrorCallback s_errorCallback = OnError;
 
-    // -------------------------------------------------------------------------
-    // FLAC__FrameHeader layout (partial, only fields we read)
-    // -------------------------------------------------------------------------
-
     [StructLayout(LayoutKind.Sequential)]
     private struct FlacFrameHeader
     {
@@ -126,14 +115,8 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         public ulong FrameOrSampleNumber;
     }
 
-    // -------------------------------------------------------------------------
-    // Error severity classification
-    //   0 LOST_SYNC          → WARNING (trailing garbage / benign resync)
-    //   1 BAD_HEADER         → WARNING (unreadable header, audio may be intact)
-    //   2 FRAME_CRC_MISMATCH → ERROR   (audio data corrupted)
-    //   3 UNPARSEABLE_STREAM → ERROR   (fundamental format violation)
-    // -------------------------------------------------------------------------
-
+    // Error codes 0 (LOST_SYNC) and 1 (BAD_HEADER) are benign resync events;
+    // 2 (FRAME_CRC_MISMATCH) and 3 (UNPARSEABLE_STREAM) indicate real corruption.
     private static bool IsBenignError(int status) => status is 0 or 1;
 
     private static string ErrorStatusName(int status) =>
@@ -146,14 +129,8 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
             _ => $"STATUS_{status}",
         };
 
-    // -------------------------------------------------------------------------
-    // Per-decode state (passed to libFLAC callbacks via GCHandle)
-    // -------------------------------------------------------------------------
-
     private sealed class DecodeState
     {
-        // Raw pointer to the file contents. Works uniformly for a pinned
-        // managed byte[] and a memory-mapped view base address.
         public IntPtr DataPtr;
         public int DataLength;
         public int BufferPosition;
@@ -174,65 +151,11 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         public bool Cancelled;
     }
 
-    bool IBufferedChecker.SupportsMemoryMappedBuffer => true;
-
     public CheckOutcome Check(
-        string filePath,
-        CancellationToken cancellationToken,
-        IProgress<FileProgress> progress
-    )
-    {
-        if (!File.Exists(filePath))
-            return new CheckOutcome(
-                CheckResult.Error("File not found.", CheckCategory.Error),
-                null
-            );
-
-        if (!IsLibraryAvailable())
-            return new CheckOutcome(
-                CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error),
-                null
-            );
-
-        FileBuffer buffer;
-        try
-        {
-            buffer = FileBuffer.Load(filePath);
-        }
-        catch (OutOfMemoryException)
-        {
-            return new CheckOutcome(
-                CheckResult.Error("File too large to load into memory.", CheckCategory.Error),
-                null
-            );
-        }
-        catch (Exception ex)
-        {
-            return new CheckOutcome(
-                CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error),
-                null
-            );
-        }
-
-        using (buffer)
-            return DecodeBuffer(buffer, cancellationToken, progress);
-    }
-
-    CheckOutcome IBufferedChecker.CheckWithBuffer(
-        string filePath,
         FileBuffer buffer,
         CancellationToken cancellationToken,
         IProgress<FileProgress> progress
-    )
-    {
-        if (!IsLibraryAvailable())
-            return new CheckOutcome(
-                CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error),
-                null
-            );
-
-        return DecodeBuffer(buffer, cancellationToken, progress);
-    }
+    ) => DecodeBuffer(buffer, cancellationToken, progress);
 
     private static CheckOutcome DecodeBuffer(
         FileBuffer buffer,

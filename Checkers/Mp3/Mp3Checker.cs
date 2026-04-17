@@ -48,50 +48,13 @@ internal static class Mp3DiagnosticInfo
 }
 
 [SupportedOSPlatform("windows")]
-internal sealed class Mp3Checker : IFormatChecker, IBufferedChecker
+internal sealed class Mp3Checker : IFormatChecker
 {
     public string FormatId => "MP3";
 
-    bool IBufferedChecker.SupportsMemoryMappedBuffer => true;
+    public bool SupportsMemoryMappedBuffer => true;
 
     public CheckOutcome Check(
-        string filePath,
-        CancellationToken ct,
-        IProgress<FileProgress> progress
-    )
-    {
-        if (!File.Exists(filePath))
-            return new CheckOutcome(
-                CheckResult.Error("File not found.", CheckCategory.Error),
-                null
-            );
-
-        FileBuffer buffer;
-        try
-        {
-            buffer = FileBuffer.Load(filePath);
-        }
-        catch (OutOfMemoryException)
-        {
-            return new CheckOutcome(
-                CheckResult.Error("File too large to load into memory.", CheckCategory.Error),
-                null
-            );
-        }
-        catch (Exception ex)
-        {
-            return new CheckOutcome(
-                CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error),
-                null
-            );
-        }
-
-        using (buffer)
-            return DecodeBuffer(buffer, ct, progress);
-    }
-
-    CheckOutcome IBufferedChecker.CheckWithBuffer(
-        string filePath,
         FileBuffer buffer,
         CancellationToken cancellationToken,
         IProgress<FileProgress> progress

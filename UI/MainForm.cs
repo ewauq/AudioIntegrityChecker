@@ -861,11 +861,10 @@ public sealed class MainForm : Form
 
     private void OnOptionsApplied()
     {
+        // The label reflects what the next scan will use. A running scan
+        // keeps its current worker count until it finishes.
         int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), CurrentStorageKind());
         _labelWorkers.Text = $"Workers: {workerCount}";
-        // Propagate to a running or paused scan so the change takes effect
-        // without requiring a restart of the analysis.
-        _pipeline?.AdjustWorkerCount(workerCount);
     }
 
     /// <summary>
