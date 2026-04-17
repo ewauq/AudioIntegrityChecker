@@ -38,11 +38,11 @@ internal sealed class FileBuffer : IDisposable
         _pointer = _pinHandle.AddrOfPinnedObject();
     }
 
-    private unsafe FileBuffer(MemoryMappedFile file, MemoryMappedViewAccessor view)
+    private unsafe FileBuffer(MemoryMappedFile file, MemoryMappedViewAccessor view, int length)
     {
         _mmapFile = file;
         _mmapView = view;
-        _length = checked((int)view.Capacity);
+        _length = length;
 
         byte* ptr = null;
         view.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
@@ -54,6 +54,12 @@ internal sealed class FileBuffer : IDisposable
 
     public static FileBuffer MemoryMap(string filePath)
     {
+        // view.Capacity is rounded up to the OS page size, so bytes past the
+        // real file end are accessible as zeros. Using it as the buffer length
+        // lets checkers read that padding and misdetect trailing garbage, so
+        // we capture the actual file size up front instead.
+        long fileSize = new FileInfo(filePath).Length;
+
         MemoryMappedFile? file = null;
         MemoryMappedViewAccessor? view = null;
         try
@@ -66,7 +72,7 @@ internal sealed class FileBuffer : IDisposable
                 MemoryMappedFileAccess.Read
             );
             view = file.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-            return new FileBuffer(file, view);
+            return new FileBuffer(file, view, checked((int)fileSize));
         }
         catch
         {
