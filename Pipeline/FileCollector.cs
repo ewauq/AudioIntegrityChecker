@@ -4,26 +4,18 @@ using AudioIntegrityChecker.Core;
 namespace AudioIntegrityChecker.Pipeline;
 
 /// <summary>
-/// Scans a set of file/directory paths and returns <see cref="FileEntry"/> records
-/// for all supported audio files found, filtering out unsupported formats.
-/// Runs on a thread-pool thread, no UI access.
-///
-/// Duration is deliberately NOT read here: opening each file a second time just to
-/// peek at metadata is extremely expensive on spinning disks. The duration is
-/// instead extracted by the checker during analysis, when the file is already
-/// loaded into memory.
-///
-/// Roots are grouped by physical disk and walked in parallel across groups.
-/// Inside a disk group, the walk is sequential to avoid head thrashing on HDDs.
-/// HDD groups are sorted by file path after collection so the analysis phase
-/// follows the MFT allocation order, which is close to the physical layout.
+/// Walks the file system under a set of roots and returns
+/// <see cref="FileEntry"/> records for every supported audio file found.
+/// Extension filtering happens kernel-side via <c>FindFirstFileEx</c>.
+/// Roots are grouped by physical disk and walked in parallel across groups;
+/// inside a disk group, the walk is sequential. HDD groups are sorted by
+/// file path after collection so the analysis phase follows the MFT
+/// allocation order, which is close to the physical layout.
 /// </summary>
 internal static class FileCollector
 {
-    // Enumerate once per extension so NTFS filters unsupported files kernel-side,
-    // instead of streaming every entry back to us for a managed-side rejection.
-    // BufferSize = 64 KB lets FindFirstFile batch many entries per syscall on
-    // large directories (default is 4 KB).
+    // BufferSize = 64 KB lets FindFirstFile batch many entries per syscall
+    // on large directories (default is 4 KB).
     private static readonly EnumerationOptions s_directOnlyOptions = new()
     {
         RecurseSubdirectories = false,
@@ -35,25 +27,25 @@ internal static class FileCollector
 
     internal static List<FileEntry> Collect(
         string[] paths,
-        ScanContext context,
+        IReadOnlyDictionary<string, IFormatChecker> checkersByExtension,
         CancellationToken cancellationToken,
         IProgress<int>? scanProgress = null
     )
     {
         const int ScanProgressInterval = 50;
 
-        // Flatten the extension → checker mapping into parallel arrays so the
-        // hot walk loop reads them by index instead of hashing strings.
-        int extCount = context.SupportedExtensions.Count;
+        // Flatten the extension → checker mapping into parallel arrays so
+        // the hot walk loop reads them by index instead of hashing strings.
+        int extCount = checkersByExtension.Count;
         var patterns = new string[extCount];
         var labels = new string[extCount];
         var checkers = new IFormatChecker[extCount];
         int idx = 0;
-        foreach (var ext in context.SupportedExtensions)
+        foreach (var (ext, checker) in checkersByExtension)
         {
             patterns[idx] = "*." + ext;
             labels[idx] = ext.ToUpperInvariant();
-            checkers[idx] = context.CheckersByExtension[ext];
+            checkers[idx] = checker;
             idx++;
         }
 

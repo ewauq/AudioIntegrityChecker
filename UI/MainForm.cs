@@ -495,8 +495,6 @@ public sealed class MainForm : Form
         List<FileEntry> entries;
         try
         {
-            var scanContext = ScanContext.Create(_registry);
-
             var scanProgress = new Progress<int>(count =>
                 SetStatus($"Scanning… {count} file{(count == 1 ? "" : "s")} found")
             );
@@ -505,7 +503,7 @@ public sealed class MainForm : Form
                 () =>
                     FileCollector.Collect(
                         droppedPaths,
-                        scanContext,
+                        _registry.CheckersByExtension,
                         cancellationToken,
                         scanProgress
                     ),
