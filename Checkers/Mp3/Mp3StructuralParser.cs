@@ -24,7 +24,7 @@ internal static class Mp3StructuralParser
     // Public entry point
     // -------------------------------------------------------------------------
 
-    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)> Scan(byte[] buf)
+    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)> Scan(ReadOnlySpan<byte> buf)
     {
         var diagnostics = new List<(Mp3Diagnostic, long)>();
 
@@ -203,7 +203,7 @@ internal static class Mp3StructuralParser
     // -------------------------------------------------------------------------
 
     private static void CheckXingLame(
-        byte[] buf,
+        ReadOnlySpan<byte> buf,
         int firstFramePos,
         int version,
         int channelMode,
@@ -291,7 +291,7 @@ internal static class Mp3StructuralParser
     // ID3v2 skip
     // -------------------------------------------------------------------------
 
-    private static int SkipId3v2(byte[] buf)
+    private static int SkipId3v2(ReadOnlySpan<byte> buf)
     {
         if (buf.Length < Mp3Format.Id3v2HeaderSize)
             return 0;
@@ -319,7 +319,7 @@ internal static class Mp3StructuralParser
     // Helpers
     // -------------------------------------------------------------------------
 
-    private static int FindNextSync(byte[] buf, int from)
+    private static int FindNextSync(ReadOnlySpan<byte> buf, int from)
     {
         for (int i = from; i <= buf.Length - 2; i++)
         {
@@ -346,7 +346,7 @@ internal static class Mp3StructuralParser
         };
     }
 
-    private static uint ReadBigEndianUInt32(byte[] buf, int offset) =>
+    private static uint ReadBigEndianUInt32(ReadOnlySpan<byte> buf, int offset) =>
         ((uint)buf[offset] << 24)
         | ((uint)buf[offset + 1] << 16)
         | ((uint)buf[offset + 2] << 8)
@@ -358,7 +358,7 @@ internal static class Mp3StructuralParser
     // Pass init=0xFFFF to start a new CRC, or a prior return value to continue.
     // -------------------------------------------------------------------------
 
-    private static ushort Crc16(ushort crc, byte[] buf, int offset, int length)
+    private static ushort Crc16(ushort crc, ReadOnlySpan<byte> buf, int offset, int length)
     {
         for (int i = 0; i < length; i++)
         {
@@ -381,7 +381,7 @@ internal static class Mp3StructuralParser
     // Matches the CRC_update() function in libmp3lame/VbrTag.c.
     // -------------------------------------------------------------------------
 
-    private static ushort CrcLameTag(byte[] buf, int offset, int length)
+    private static ushort CrcLameTag(ReadOnlySpan<byte> buf, int offset, int length)
     {
         ushort crc = 0x0000;
         for (int i = 0; i < length; i++)

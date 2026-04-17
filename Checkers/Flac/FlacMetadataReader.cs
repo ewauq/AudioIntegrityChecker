@@ -1,8 +1,8 @@
 namespace AudioIntegrityChecker.Checkers.Flac;
 
 /// <summary>
-/// Reads FLAC STREAMINFO without a full decode.
-/// Parses the first 42 bytes of the file (fLaC marker + STREAMINFO block header + data).
+/// Parses FLAC STREAMINFO from the first 42 bytes of the file
+/// (fLaC marker + 4-byte block header + 34-byte STREAMINFO payload).
 /// </summary>
 public static class FlacMetadataReader
 {
@@ -12,40 +12,11 @@ public static class FlacMetadataReader
     private const int SampleRateOffset = 10;
     private const int TotalSamplesOffset = 13;
 
-    public static (ulong TotalSamples, uint SampleRate) TryReadStreamInfo(string filePath)
-    {
-        try
-        {
-            Span<byte> buffer = stackalloc byte[MinStreamInfoBytes];
-            using var fileStream = new FileStream(
-                filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: 64
-            );
-
-            if (fileStream.Read(buffer) < MinStreamInfoBytes)
-                return default;
-
-            return ParseStreamInfo(buffer);
-        }
-        catch
-        {
-            return default;
-        }
-    }
-
     public static (ulong TotalSamples, uint SampleRate) TryReadStreamInfo(ReadOnlySpan<byte> buffer)
     {
         if (buffer.Length < MinStreamInfoBytes)
             return default;
 
-        return ParseStreamInfo(buffer);
-    }
-
-    private static (ulong TotalSamples, uint SampleRate) ParseStreamInfo(ReadOnlySpan<byte> buffer)
-    {
         if (buffer[0] != 0x66 || buffer[1] != 0x4C || buffer[2] != 0x61 || buffer[3] != 0x43)
             return default;
 

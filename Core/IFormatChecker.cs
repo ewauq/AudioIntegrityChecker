@@ -1,14 +1,30 @@
+using AudioIntegrityChecker.Pipeline;
+
 namespace AudioIntegrityChecker.Core;
 
-public interface IFormatChecker
+/// <summary>
+/// A format-specific integrity checker. The pipeline loads each file into a
+/// <see cref="FileBuffer"/> (managed byte[] on HDD, memory-mapped view on SSD)
+/// and hands it to the checker, which avoids re-reading the file inside
+/// individual passes.
+/// </summary>
+internal interface IFormatChecker
 {
     string FormatId { get; }
-    CheckOutcome Check(string filePath, CancellationToken ct, IProgress<FileProgress> progress);
+
+    /// <summary>
+    /// When <see langword="true"/>, the pipeline may hand over a
+    /// memory-mapped <see cref="FileBuffer"/>. Checkers must then access the
+    /// contents via <see cref="FileBuffer.AsSpan"/> or
+    /// <see cref="FileBuffer.Pointer"/>.
+    /// </summary>
+    bool SupportsMemoryMappedBuffer { get; }
+
+    CheckOutcome Check(
+        FileBuffer buffer,
+        CancellationToken cancellationToken,
+        IProgress<FileProgress> progress
+    );
 }
 
-/// <summary>
-/// Result of a format check plus any metadata extracted from the already-loaded file buffer.
-/// Duration is computed opportunistically by the checker (which has the file in memory)
-/// to avoid a second disk round-trip during the scan phase.
-/// </summary>
 public record CheckOutcome(CheckResult Result, TimeSpan? Duration);

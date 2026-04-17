@@ -1,27 +1,24 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using AudioIntegrityChecker.Core;
+using AudioIntegrityChecker.Pipeline;
 
 namespace AudioIntegrityChecker.Checkers.Flac;
 
 /// <summary>
-/// Verifies FLAC file integrity via P/Invoke against libFLAC.dll.
-///
-/// Strategy:
-///   1. Load the entire file into a managed byte[] before decoding.
-///      The FLAC decoder reads from that in-memory buffer via callbacks,
-///      zero disk I/O during decode, safe for multithreaded use.
-///   2. Pre-read STREAMINFO (42 bytes) to obtain total_samples and sample_rate
-///      before decoder init, so no metadata callback is needed.
-///   3. Call FLAC__stream_decoder_set_metadata_ignore_all to suppress all
-///      metadata callbacks (avoids parsing large cover art / Vorbis comments).
-///   4. Rate-limit progress reports to at most one per integer-percent change
-///      (≤ 100 BeginInvoke calls per file regardless of frame count).
+/// Verifies FLAC file integrity via P/Invoke against libFLAC.dll. Decode
+/// runs against a pre-loaded <see cref="FileBuffer"/> so the file is read
+/// exactly once. STREAMINFO is parsed from the same buffer before decoder
+/// init, and all other metadata callbacks are suppressed via
+/// FLAC__stream_decoder_set_metadata_ignore_all. Progress reports are
+/// rate-limited to one per integer percent.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class NativeFlacChecker : IFormatChecker
+internal sealed class NativeFlacChecker : IFormatChecker
 {
     public string FormatId => "FLAC";
+
+    public bool SupportsMemoryMappedBuffer => true;
 
     private const string LibFlac = "libFLAC.dll";
 
@@ -95,9 +92,16 @@ public sealed class NativeFlacChecker : IFormatChecker
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void ErrorCallback(IntPtr decoder, int status, IntPtr clientData);
 
-    // -------------------------------------------------------------------------
-    // FLAC__FrameHeader layout (partial, only fields we read)
-    // -------------------------------------------------------------------------
+    // Cached delegate instances: the callbacks have no captured state (context is
+    // read from client_data), so the same delegate is reused for every decode and
+    // marshalling allocates only once per process instead of once per file.
+    private static readonly ReadCallback s_readCallback = OnRead;
+    private static readonly SeekCallback s_seekCallback = OnSeek;
+    private static readonly TellCallback s_tellCallback = OnTell;
+    private static readonly LengthCallback s_lengthCallback = OnLength;
+    private static readonly EofCallback s_eofCallback = OnEof;
+    private static readonly WriteCallback s_writeCallback = OnWrite;
+    private static readonly ErrorCallback s_errorCallback = OnError;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FlacFrameHeader
@@ -111,14 +115,8 @@ public sealed class NativeFlacChecker : IFormatChecker
         public ulong FrameOrSampleNumber;
     }
 
-    // -------------------------------------------------------------------------
-    // Error severity classification
-    //   0 LOST_SYNC          → WARNING (trailing garbage / benign resync)
-    //   1 BAD_HEADER         → WARNING (unreadable header, audio may be intact)
-    //   2 FRAME_CRC_MISMATCH → ERROR   (audio data corrupted)
-    //   3 UNPARSEABLE_STREAM → ERROR   (fundamental format violation)
-    // -------------------------------------------------------------------------
-
+    // Error codes 0 (LOST_SYNC) and 1 (BAD_HEADER) are benign resync events;
+    // 2 (FRAME_CRC_MISMATCH) and 3 (UNPARSEABLE_STREAM) indicate real corruption.
     private static bool IsBenignError(int status) => status is 0 or 1;
 
     private static string ErrorStatusName(int status) =>
@@ -131,13 +129,10 @@ public sealed class NativeFlacChecker : IFormatChecker
             _ => $"STATUS_{status}",
         };
 
-    // -------------------------------------------------------------------------
-    // Per-decode state (passed to libFLAC callbacks via GCHandle)
-    // -------------------------------------------------------------------------
-
     private sealed class DecodeState
     {
-        public required byte[] FileBuffer;
+        public IntPtr DataPtr;
+        public int DataLength;
         public int BufferPosition;
 
         public ulong TotalSamples;
@@ -157,47 +152,21 @@ public sealed class NativeFlacChecker : IFormatChecker
     }
 
     public CheckOutcome Check(
-        string filePath,
+        FileBuffer buffer,
+        CancellationToken cancellationToken,
+        IProgress<FileProgress> progress
+    ) => DecodeBuffer(buffer, cancellationToken, progress);
+
+    private static CheckOutcome DecodeBuffer(
+        FileBuffer buffer,
         CancellationToken cancellationToken,
         IProgress<FileProgress> progress
     )
     {
-        if (!File.Exists(filePath))
-            return new CheckOutcome(
-                CheckResult.Error("File not found.", CheckCategory.Error),
-                null
-            );
-
-        if (!IsLibraryAvailable())
-            return new CheckOutcome(
-                CheckResult.Error("libFLAC.dll not found.", CheckCategory.Error),
-                null
-            );
-
-        byte[] fileBuffer;
-        try
-        {
-            fileBuffer = File.ReadAllBytes(filePath);
-        }
-        catch (OutOfMemoryException)
-        {
-            return new CheckOutcome(
-                CheckResult.Error("File too large to load into memory.", CheckCategory.Error),
-                null
-            );
-        }
-        catch (Exception ex)
-        {
-            return new CheckOutcome(
-                CheckResult.Error($"Cannot read file: {ex.Message}", CheckCategory.Error),
-                null
-            );
-        }
-
         // Pre-read STREAMINFO from the buffer, used for progress, timecode, and duration.
         // This avoids needing a metadata callback during decode, and saves a second disk
         // round-trip that would otherwise be required during the scan phase.
-        var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(fileBuffer);
+        var (totalSamples, sampleRate) = FlacMetadataReader.TryReadStreamInfo(buffer.AsSpan());
         TimeSpan? duration =
             totalSamples > 0 && sampleRate > 0
                 ? TimeSpan.FromSeconds((double)totalSamples / sampleRate)
@@ -205,7 +174,8 @@ public sealed class NativeFlacChecker : IFormatChecker
 
         var state = new DecodeState
         {
-            FileBuffer = fileBuffer,
+            DataPtr = buffer.Pointer,
+            DataLength = buffer.Length,
             TotalSamples = totalSamples,
             SampleRate = sampleRate,
             CancellationToken = cancellationToken,
@@ -227,27 +197,18 @@ public sealed class NativeFlacChecker : IFormatChecker
             // Suppress all metadata callbacks: we pre-read what we need.
             FLAC__stream_decoder_set_metadata_ignore_all(decoder);
 
-            // Keep delegate instances alive for the full duration of decode.
-            ReadCallback readCallback = OnRead;
-            SeekCallback seekCallback = OnSeek;
-            TellCallback tellCallback = OnTell;
-            LengthCallback lengthCallback = OnLength;
-            EofCallback eofCallback = OnEof;
-            WriteCallback writeCallback = OnWrite;
-            ErrorCallback errorCallback = OnError;
-
             var clientData = GCHandle.ToIntPtr(gcHandle);
 
             int initStatus = FLAC__stream_decoder_init_stream(
                 decoder,
-                readCallback,
-                seekCallback,
-                tellCallback,
-                lengthCallback,
-                eofCallback,
-                writeCallback,
+                s_readCallback,
+                s_seekCallback,
+                s_tellCallback,
+                s_lengthCallback,
+                s_eofCallback,
+                s_writeCallback,
                 IntPtr.Zero,
-                errorCallback,
+                s_errorCallback,
                 clientData
             );
 
@@ -325,7 +286,7 @@ public sealed class NativeFlacChecker : IFormatChecker
         }
     }
 
-    private static int OnRead(
+    private static unsafe int OnRead(
         IntPtr decoder,
         IntPtr buffer,
         ref UIntPtr byteCount,
@@ -334,7 +295,7 @@ public sealed class NativeFlacChecker : IFormatChecker
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
         int requested = (int)(ulong)byteCount;
-        int remaining = state.FileBuffer.Length - state.BufferPosition;
+        int remaining = state.DataLength - state.BufferPosition;
 
         if (remaining <= 0)
         {
@@ -343,7 +304,12 @@ public sealed class NativeFlacChecker : IFormatChecker
         }
 
         int toRead = Math.Min(requested, remaining);
-        Marshal.Copy(state.FileBuffer, state.BufferPosition, buffer, toRead);
+        Buffer.MemoryCopy(
+            (byte*)state.DataPtr + state.BufferPosition,
+            (byte*)buffer,
+            toRead,
+            toRead
+        );
         state.BufferPosition += toRead;
         byteCount = (UIntPtr)(uint)toRead;
         return 0; // CONTINUE
@@ -352,7 +318,7 @@ public sealed class NativeFlacChecker : IFormatChecker
     private static int OnSeek(IntPtr decoder, ulong offset, IntPtr clientData)
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
-        if (offset > (ulong)state.FileBuffer.Length)
+        if (offset > (ulong)state.DataLength)
             return 1; // ERROR
         state.BufferPosition = (int)offset;
         return 0;
@@ -368,14 +334,14 @@ public sealed class NativeFlacChecker : IFormatChecker
     private static int OnLength(IntPtr decoder, ref ulong streamLength, IntPtr clientData)
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
-        streamLength = (ulong)state.FileBuffer.Length;
+        streamLength = (ulong)state.DataLength;
         return 0;
     }
 
     private static bool OnEof(IntPtr decoder, IntPtr clientData)
     {
         var state = (DecodeState)GCHandle.FromIntPtr(clientData).Target!;
-        return state.BufferPosition >= state.FileBuffer.Length;
+        return state.BufferPosition >= state.DataLength;
     }
 
     private static int OnWrite(IntPtr decoder, IntPtr framePtr, IntPtr samples, IntPtr clientData)
@@ -420,25 +386,5 @@ public sealed class NativeFlacChecker : IFormatChecker
         state.ErrorIsWarning = IsBenignError(status);
         state.ErrorAtSample = state.DecodedSamples;
         state.HasError = true;
-    }
-
-    private static bool? _libraryAvailable;
-
-    internal static bool IsLibraryAvailable()
-    {
-        if (_libraryAvailable.HasValue)
-            return _libraryAvailable.Value;
-
-        if (NativeLibrary.TryLoad(LibFlac, out var handle))
-        {
-            NativeLibrary.Free(handle);
-            _libraryAvailable = true;
-        }
-        else
-        {
-            _libraryAvailable = false;
-        }
-
-        return _libraryAvailable.Value;
     }
 }

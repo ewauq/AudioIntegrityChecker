@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
@@ -60,11 +61,16 @@ internal static class Mp3Mpg123Backend
     }
 
     /// <summary>
-    /// Decodes the file buffer via mpg123 and returns a list of diagnostics.
-    /// Returns <see langword="null"/> if the decoder handle could not be created or opened,
-    /// indicating an infrastructure failure rather than a file problem.
+    /// Decodes a pre-loaded file buffer via mpg123 and returns a list of
+    /// diagnostics. The input is passed as a raw pointer + length so the call
+    /// works uniformly for pinned managed arrays and memory-mapped views.
+    /// Returns <see langword="null"/> if the decoder handle could not be created
+    /// or opened, indicating an infrastructure failure rather than a file problem.
     /// </summary>
-    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)>? Decode(byte[] fileBuffer)
+    internal static List<(Mp3Diagnostic Diagnostic, long FrameIndex)>? Decode(
+        IntPtr data,
+        int length
+    )
     {
         var diagnostics = new List<(Mp3Diagnostic, long)>();
 
@@ -79,24 +85,39 @@ internal static class Mp3Mpg123Backend
             if (rc != Mp3NativeMethods.MPG123_OK)
                 return null;
 
-            Mp3NativeMethods.mpg123_feed(mh, fileBuffer, (nuint)fileBuffer.Length);
+            Mp3NativeMethods.mpg123_feed(mh, data, (nuint)length);
 
-            var outBuf = new byte[MaxDecodedFrameBytes];
-            while (true)
+            var outBuf = ArrayPool<byte>.Shared.Rent(MaxDecodedFrameBytes);
+            try
             {
-                rc = Mp3NativeMethods.mpg123_read(mh, outBuf, (nuint)outBuf.Length, out _);
-
-                if (rc == Mp3NativeMethods.MPG123_DONE)
-                    break;
-                if (rc == Mp3NativeMethods.MPG123_OK || rc == Mp3NativeMethods.MPG123_NEW_FORMAT)
-                    continue;
-                if (rc == Mp3NativeMethods.MPG123_ERR)
+                while (true)
                 {
-                    diagnostics.Add((Mp3Diagnostic.DECODE_ERROR, 0));
+                    rc = Mp3NativeMethods.mpg123_read(
+                        mh,
+                        outBuf,
+                        (nuint)MaxDecodedFrameBytes,
+                        out _
+                    );
+
+                    if (rc == Mp3NativeMethods.MPG123_DONE)
+                        break;
+                    if (
+                        rc == Mp3NativeMethods.MPG123_OK
+                        || rc == Mp3NativeMethods.MPG123_NEW_FORMAT
+                    )
+                        continue;
+                    if (rc == Mp3NativeMethods.MPG123_ERR)
+                    {
+                        diagnostics.Add((Mp3Diagnostic.DECODE_ERROR, 0));
+                        break;
+                    }
+                    // MPG123_NEED_MORE: all data already fed, treat as end of stream
                     break;
                 }
-                // MPG123_NEED_MORE: all data already fed, treat as end of stream
-                break;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(outBuf);
             }
         }
         finally

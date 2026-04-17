@@ -10,10 +10,6 @@ internal static class Mp3MetadataReader
 {
     private const int HeaderReadSize = 10_240; // 10 KB: covers ID3v2 + first frame + Xing tag
 
-    /// <summary>
-    /// Extracts the track duration from an MP3 file already loaded in memory.
-    /// Used by Mp3Checker to avoid a second file open during scanning.
-    /// </summary>
     internal static TimeSpan? TryReadDuration(ReadOnlySpan<byte> fileBuffer)
     {
         long fileSize = fileBuffer.Length;
@@ -29,33 +25,6 @@ internal static class Mp3MetadataReader
 
         int toRead = (int)Math.Min(remaining, HeaderReadSize);
         return ParseDuration(fileBuffer.Slice((int)frameAreaStart, toRead), fileSize, id3Size);
-    }
-
-    /// <summary>
-    /// Estimates track duration from a partial header buffer and the actual file size on disk.
-    /// Used for header-only reads where the buffer is smaller than the full file.
-    /// The CBR fallback uses <paramref name="actualFileSize"/> instead of the buffer length,
-    /// giving a correct estimate even on a 10 KB read.
-    /// </summary>
-    internal static TimeSpan? TryReadDurationFromHeader(
-        ReadOnlySpan<byte> header,
-        long actualFileSize
-    )
-    {
-        if (actualFileSize < Mp3Format.FrameHeaderSize)
-            return null;
-
-        int id3Size = ReadId3v2Size(header);
-        long frameAreaStart = Math.Min(id3Size, actualFileSize);
-        long remaining = actualFileSize - frameAreaStart;
-        if (remaining < Mp3Format.FrameHeaderSize)
-            return null;
-
-        int toRead = (int)Math.Min(remaining, (long)(header.Length - frameAreaStart));
-        if (toRead < Mp3Format.FrameHeaderSize)
-            return null;
-
-        return ParseDuration(header.Slice((int)frameAreaStart, toRead), actualFileSize, id3Size);
     }
 
     private static int ReadId3v2Size(ReadOnlySpan<byte> buffer)

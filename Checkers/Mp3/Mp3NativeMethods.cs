@@ -22,7 +22,7 @@ internal static class Mp3NativeMethods
     internal static extern int mpg123_open_feed(IntPtr mh);
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int mpg123_feed(IntPtr mh, byte[] data, nuint size);
+    internal static extern int mpg123_feed(IntPtr mh, IntPtr data, nuint size);
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int mpg123_read(IntPtr mh, byte[] outBuffer, nuint size, out nuint done);

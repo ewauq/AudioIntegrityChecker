@@ -19,7 +19,7 @@ public sealed class MainForm : Form
     private AnalysisPipeline? _pipeline;
     private CancellationTokenSource? _analysisCts;
     private CancellationTokenSource? _scanCts;
-    private readonly List<string> _queuedFiles = [];
+    private readonly List<FileEntry> _queuedFiles = [];
     private readonly Dictionary<string, ListViewItem> _itemByPath = new(
         StringComparer.OrdinalIgnoreCase
     );
@@ -27,8 +27,6 @@ public sealed class MainForm : Form
     private int _totalFiles;
     private int _completedFiles;
     private long _totalBytes;
-    private TimeSpan _totalDuration;
-    private TimeSpan _totalScannedDuration;
     private readonly Dictionary<string, long> _fileSizes = new(StringComparer.OrdinalIgnoreCase);
     private long _processedBytes;
     private readonly Stopwatch _analysisStopwatch = new();
@@ -58,11 +56,11 @@ public sealed class MainForm : Form
     private readonly StatusStrip _statusStrip;
     private readonly ToolStripStatusLabel _labelFiles;
     private readonly ToolStripStatusLabel _labelSize;
-    private readonly ToolStripStatusLabel _labelDuration;
     private readonly ToolStripStatusLabel _labelRam;
     private readonly ToolStripStatusLabel _labelWorkers;
+    private readonly ToolStripStatusLabel _labelStorage;
     private readonly ToolStripSeparator _sepSize;
-    private readonly ToolStripSeparator _sepDuration;
+    private readonly ToolStripSeparator _sepStorage;
     private readonly System.Windows.Forms.Timer _ramTimer;
     private readonly SplitContainer _splitContainer;
     private readonly HtmlPanel _htmlPanel;
@@ -75,11 +73,6 @@ public sealed class MainForm : Form
     private int _countStructure;
     private int _countCorruption;
     private int _countError;
-
-    // DLL / binary status (static, set once on startup)
-    private readonly ToolStripStatusLabel _labelLibFlac;
-    private readonly ToolStripStatusLabel _labelMpg123;
-    private readonly ToolStripSeparator _sepDlls;
 
     private const int ColDuration = 2;
     private const int ColFormat = 3;
@@ -302,8 +295,12 @@ public sealed class MainForm : Form
             menuAutoResize,
         ]);
 
+        var menuTools = new ToolStripMenuItem("&Tools");
+        var menuOptions = new ToolStripMenuItem("&Options…", null, OnMenuOptions);
+        menuTools.DropDownItems.Add(menuOptions);
+
         _menuStrip = new MenuStrip();
-        _menuStrip.Items.AddRange([menuFile, menuView]);
+        _menuStrip.Items.AddRange([menuFile, menuView, menuTools]);
 
         // ---- Column header context menu ----
         BuildColumnHeaderContextMenu();
@@ -311,18 +308,14 @@ public sealed class MainForm : Form
         _labelFiles = new ToolStripStatusLabel();
         _sepSize = new ToolStripSeparator { Visible = false };
         _labelSize = new ToolStripStatusLabel { Visible = false };
-        _sepDuration = new ToolStripSeparator { Visible = false };
-        _labelDuration = new ToolStripStatusLabel { Visible = false };
+        _sepStorage = new ToolStripSeparator { Visible = false };
+        _labelStorage = new ToolStripStatusLabel { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
         _labelRam = new ToolStripStatusLabel(
             $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
         );
-        var sepWorkers = new ToolStripSeparator();
+        var sepRam = new ToolStripSeparator();
         _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
-        _sepDlls = new ToolStripSeparator();
-        _labelLibFlac = new ToolStripStatusLabel();
-        var sepMpg123 = new ToolStripSeparator();
-        _labelMpg123 = new ToolStripStatusLabel();
         var spring = new ToolStripStatusLabel { Spring = true };
 
         _statusStrip = new StatusStrip();
@@ -330,16 +323,12 @@ public sealed class MainForm : Form
             _labelFiles,
             _sepSize,
             _labelSize,
-            _sepDuration,
-            _labelDuration,
+            _sepStorage,
+            _labelStorage,
             spring,
-            _labelRam,
-            sepWorkers,
             _labelWorkers,
-            _sepDlls,
-            _labelLibFlac,
-            sepMpg123,
-            _labelMpg123,
+            sepRam,
+            _labelRam,
         ]);
 
         _progressBarTimer = new System.Windows.Forms.Timer { Interval = 500 };
@@ -368,10 +357,6 @@ public sealed class MainForm : Form
 
         RegisterCheckers();
 
-        _labelLibFlac.Text =
-            $"libFLAC: {(NativeFlacChecker.IsLibraryAvailable() ? "available" : "not available")}";
-        _labelMpg123.Text =
-            $"mpg123: {(Mp3Mpg123Backend.IsLibraryAvailable() ? "available" : "not available")}";
         // Cancel any in-flight work before the form is destroyed so that mpg123
         // worker calls finish before Shutdown() tears down the native library.
         FormClosing += OnFormClosing;
@@ -383,6 +368,8 @@ public sealed class MainForm : Form
     private void OnFormLoad(object? sender, EventArgs e)
     {
         var prefs = UserPreferences.Load();
+
+        _labelWorkers.Text = $"Workers: {GetEffectiveWorkerCount(prefs, StorageKind.Unknown)}";
 
         // Restore window size and position
         if (prefs.WindowWidth > 0 && prefs.WindowHeight > 0)
@@ -462,21 +449,8 @@ public sealed class MainForm : Form
 
     private void RegisterCheckers()
     {
-        _registry.Register(
-            "FLAC",
-            nativeFactory: () => new NativeFlacChecker(),
-            processFactory: () => new ProcessFlacChecker(),
-            nativeAvailable: NativeFlacChecker.IsLibraryAvailable
-        );
-
-        _registry.Register(
-            "MP3",
-            nativeFactory: () => new Mp3Checker(),
-            processFactory: () => new Mp3Checker(),
-            nativeAvailable: () => true // Mp3Checker handles mpg123 absence internally
-        );
-
-        _registry.Build();
+        _registry.Add("flac", new NativeFlacChecker());
+        _registry.Add("mp3", new Mp3Checker());
     }
 
     private void OnDragEnter(object? sender, DragEventArgs e)
@@ -504,8 +478,6 @@ public sealed class MainForm : Form
         _itemByPath.Clear();
         _listView.Items.Clear();
         _totalBytes = 0;
-        _totalDuration = TimeSpan.Zero;
-        _totalScannedDuration = TimeSpan.Zero;
         _fileSizes.Clear();
         _processedBytes = 0;
 
@@ -523,10 +495,6 @@ public sealed class MainForm : Form
         List<FileEntry> entries;
         try
         {
-            var supportedExtensions = _registry.SupportedExtensions.ToHashSet(
-                StringComparer.OrdinalIgnoreCase
-            );
-
             var scanProgress = new Progress<int>(count =>
                 SetStatus($"Scanning… {count} file{(count == 1 ? "" : "s")} found")
             );
@@ -535,7 +503,7 @@ public sealed class MainForm : Form
                 () =>
                     FileCollector.Collect(
                         droppedPaths,
-                        supportedExtensions,
+                        _registry.CheckersByExtension,
                         cancellationToken,
                         scanProgress
                     ),
@@ -559,7 +527,6 @@ public sealed class MainForm : Form
         _listView.BeginUpdate();
         foreach (var entry in entries)
         {
-            var format = _registry.Resolve(entry.FilePath)?.FormatId ?? entry.Format;
             var item = new ListViewItem(entry.DirectoryName)
             {
                 ToolTipText = entry.FilePath,
@@ -569,13 +536,13 @@ public sealed class MainForm : Form
             // Duration is populated later by the checker (see OnFileCompleted). Scanning
             // no longer opens each file a second time to peek at metadata.
             item.SubItems.Add("");
-            item.SubItems.Add(format);
+            item.SubItems.Add(entry.Checker.FormatId);
             item.SubItems.Add(""); // Result
             item.SubItems.Add(""); // Severity
             item.SubItems.Add(""); // Message
             item.SubItems.Add(""); // Error
 
-            _queuedFiles.Add(entry.FilePath);
+            _queuedFiles.Add(entry);
             _itemByPath[entry.FilePath] = item;
             _totalBytes += entry.Bytes;
 
@@ -586,94 +553,68 @@ public sealed class MainForm : Form
         foreach (var entry in entries)
             _fileSizes[entry.FilePath] = entry.Bytes;
 
-        _ = ReadHeaderDurationsAsync(entries, _scanCts!.Token);
-
         int fileCount = _queuedFiles.Count;
         SetStatus($"{fileCount} file{(fileCount == 1 ? "" : "s")} queued.");
 
+        UpdateStorageIndicator(entries);
         UpdateStatusBar();
         UpdateHelpPanel();
         SetAnalysisState(AnalysisState.Idle);
     }
 
-    private async Task ReadHeaderDurationsAsync(
-        IReadOnlyList<FileEntry> entries,
-        CancellationToken ct
-    )
+    private void UpdateStorageIndicator(IReadOnlyList<FileEntry> entries)
     {
-        const int FlacBytes = 42;
-        const int Mp3Bytes = 10_240;
-        var flacBuf = new byte[FlacBytes];
-        var mp3Buf = new byte[Mp3Bytes];
+        if (entries.Count == 0)
+        {
+            _sepStorage.Visible = false;
+            _labelStorage.Visible = false;
+            return;
+        }
 
-        await Task.Run(
-            () =>
-            {
-                foreach (var entry in entries)
-                {
-                    if (ct.IsCancellationRequested)
-                        return;
+        var info = StorageDetector.GetInfoForDisk(entries[0].PhysicalDiskNumber);
+        _labelStorage.Text = FormatStorageDisplay(info);
+        _sepStorage.Visible = true;
+        _labelStorage.Visible = true;
 
-                    TimeSpan? duration = null;
-                    try
-                    {
-                        if (entry.Format == "FLAC")
-                        {
-                            using var fs = new FileStream(
-                                entry.FilePath,
-                                FileMode.Open,
-                                FileAccess.Read,
-                                FileShare.Read,
-                                bufferSize: 64
-                            );
-                            if (fs.Read(flacBuf, 0, FlacBytes) >= FlacBytes)
-                            {
-                                var (samples, rate) = FlacMetadataReader.TryReadStreamInfo(flacBuf);
-                                if (rate > 0)
-                                    duration = TimeSpan.FromSeconds((double)samples / rate);
-                            }
-                        }
-                        else if (entry.Format == "MP3")
-                        {
-                            using var fs = new FileStream(
-                                entry.FilePath,
-                                FileMode.Open,
-                                FileAccess.Read,
-                                FileShare.Read,
-                                bufferSize: 4096
-                            );
-                            int read = fs.Read(mp3Buf, 0, Mp3Bytes);
-                            if (read > 0)
-                                duration = Mp3MetadataReader.TryReadDurationFromHeader(
-                                    mp3Buf.AsSpan(0, read),
-                                    entry.Bytes
-                                );
-                        }
-                    }
-                    catch
-                    {
-                        // Locked or deleted file — skip silently.
-                    }
+        // Automatic mode depends on the detected storage type, so refresh the
+        // Workers label now that we know what disk the queue sits on.
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), info.Kind);
+        _labelWorkers.Text = $"Workers: {workerCount}";
+    }
 
-                    if (!duration.HasValue)
-                        continue;
+    private static string FormatStorageDisplay(StorageInfo info)
+    {
+        var parts = new List<string>(4);
+        if (!string.IsNullOrEmpty(info.FriendlyName))
+            parts.Add(info.FriendlyName);
+        if (info.Kind != StorageKind.Unknown)
+            parts.Add(FormatMediaKind(info.Kind));
+        if (!string.IsNullOrEmpty(info.BusDisplay) && info.BusDisplay != "Unknown")
+            parts.Add($"({info.BusDisplay})");
+        if (info.SizeBytes > 0)
+            parts.Add(FormatStorageSize(info.SizeBytes));
 
-                    var d = duration.Value;
-                    var captured = entry;
-                    BeginInvoke(() =>
-                    {
-                        _totalScannedDuration += d;
-                        if (
-                            _itemByPath.TryGetValue(captured.FilePath, out var item)
-                            && string.IsNullOrEmpty(item.SubItems[ColDuration].Text)
-                        )
-                            item.SubItems[ColDuration].Text = FormatTrackDuration(d);
-                        UpdateStatusBar();
-                    });
-                }
-            },
-            ct
-        );
+        return parts.Count > 0 ? string.Join(" ", parts) : "Storage unknown";
+    }
+
+    private static string FormatMediaKind(StorageKind kind) =>
+        kind switch
+        {
+            StorageKind.Hdd => "HDD",
+            StorageKind.SataSsd => "SSD",
+            StorageKind.Nvme => "SSD",
+            _ => "",
+        };
+
+    private static string FormatStorageSize(long bytes)
+    {
+        const double TB = 1_000_000_000_000.0;
+        const double GB = 1_000_000_000.0;
+        if (bytes >= TB)
+            return $"{bytes / TB:0.#} TB";
+        if (bytes >= GB)
+            return $"{bytes / GB:0.#} GB";
+        return $"{bytes / 1_000_000.0:0.#} MB";
     }
 
     private async void OnStartClick(object? sender, EventArgs e)
@@ -708,8 +649,6 @@ public sealed class MainForm : Form
         _completedFiles = 0;
         _startedFiles = 0;
         _processedBytes = 0;
-        // Duration is reaccumulated by OnFileCompleted as each checker reports it.
-        _totalDuration = TimeSpan.Zero;
         UpdateStatusBar();
 
         foreach (ListViewItem item in _listView.Items)
@@ -725,7 +664,10 @@ public sealed class MainForm : Form
         _globalBar.Maximum = _totalFiles;
         ShowGlobalBar(true);
 
-        _pipeline = new AnalysisPipeline(_registry);
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), CurrentStorageKind());
+        _labelWorkers.Text = $"Workers: {workerCount}";
+
+        _pipeline = new AnalysisPipeline(workerCount);
         _pipeline.FileStarted += OnFileStarted;
         _pipeline.FileCompleted += OnFileCompleted;
         _pipeline.FileProgressChanged += OnFileProgress;
@@ -845,8 +787,6 @@ public sealed class MainForm : Form
         _itemByPath.Clear();
         _listView.Items.Clear();
         _totalBytes = 0;
-        _totalDuration = TimeSpan.Zero;
-        _totalScannedDuration = TimeSpan.Zero;
         _fileSizes.Clear();
         _processedBytes = 0;
         _totalFiles = 0;
@@ -857,6 +797,9 @@ public sealed class MainForm : Form
         _countStructure = 0;
         _countCorruption = 0;
         _countError = 0;
+
+        _sepStorage.Visible = false;
+        _labelStorage.Visible = false;
 
         UpdateStatusBar();
         UpdateHelpPanel();
@@ -906,6 +849,53 @@ public sealed class MainForm : Form
     private void OnMenuAutoResizeColumns(object? sender, EventArgs e)
     {
         _listView.AutoResizeColumns(ColumnHeaderAutoResizeStyle.ColumnContent);
+    }
+
+    private void OnMenuOptions(object? sender, EventArgs e)
+    {
+        var prefs = UserPreferences.Load();
+        using var dialog = new OptionsForm(prefs);
+        dialog.SettingsApplied += OnOptionsApplied;
+        dialog.ShowDialog(this);
+    }
+
+    private void OnOptionsApplied()
+    {
+        // The label reflects what the next scan will use. A running scan
+        // keeps its current worker count until it finishes.
+        int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), CurrentStorageKind());
+        _labelWorkers.Text = $"Workers: {workerCount}";
+    }
+
+    /// <summary>
+    /// Best-effort storage kind for the files currently queued. Returns
+    /// <see cref="StorageKind.Unknown"/> when the queue is empty, which maps to
+    /// the conservative default (min(ProcessorCount, 8)).
+    /// </summary>
+    private StorageKind CurrentStorageKind()
+    {
+        if (_queuedFiles.Count == 0)
+            return StorageKind.Unknown;
+        return StorageDetector.GetKindForDisk(_queuedFiles[0].PhysicalDiskNumber);
+    }
+
+    // Per-disk matrix from the plan (Section 4). In Automatic mode the worker
+    // count tracks the storage type; mechanical disks use every core for CPU
+    // decoding (I/O is serialised anyway) while SATA SSDs are capped to avoid
+    // saturating the SATA command queue. Manual mode overrides everything.
+    private static int GetEffectiveWorkerCount(UserPreferences prefs, StorageKind kind)
+    {
+        if (!prefs.WorkerCountAuto)
+            return Math.Clamp(prefs.WorkerCount, 1, Environment.ProcessorCount);
+
+        int processorCount = Environment.ProcessorCount;
+        return kind switch
+        {
+            StorageKind.Hdd => processorCount,
+            StorageKind.Nvme => processorCount,
+            StorageKind.SataSsd => Math.Min(processorCount, 8),
+            _ => Math.Min(processorCount, 8),
+        };
     }
 
     // -------------------------------------------------------------------------
@@ -1080,13 +1070,9 @@ public sealed class MainForm : Form
             var severity = ResultFormatting.GetSeverity(result.Category);
             var color = ResultFormatting.GetSeverityColor(severity);
 
-            // Duration is now extracted by the checker (from the in-memory buffer it
-            // already loaded), so we populate the column and total here (after scan).
+            // Duration comes from the checker's in-memory buffer, populated per row.
             if (args.Duration.HasValue)
-            {
                 item.SubItems[ColDuration].Text = FormatTrackDuration(args.Duration);
-                _totalDuration += args.Duration.Value;
-            }
 
             item.SubItems[ColResult].Text = isOk ? "OK" : "ISSUE";
             item.SubItems[ColSeverity].Text =
@@ -1222,23 +1208,11 @@ public sealed class MainForm : Form
         int fileCount = _queuedFiles.Count;
         _labelFiles.Text = $"{fileCount} file{(fileCount == 1 ? "" : "s")}";
 
-        // Show exact analyzed duration when available; fall back to header-estimated
-        // total during the scan phase (before any analysis has started).
-        var displayDuration =
-            _totalDuration > TimeSpan.Zero ? _totalDuration : _totalScannedDuration;
-
         bool hasSize = _totalBytes > 0;
-        bool hasDuration = displayDuration > TimeSpan.Zero;
-
         _sepSize.Visible = hasSize;
         _labelSize.Visible = hasSize;
         if (hasSize)
             _labelSize.Text = FormatBytes(_totalBytes);
-
-        _sepDuration.Visible = hasDuration;
-        _labelDuration.Visible = hasDuration;
-        if (hasDuration)
-            _labelDuration.Text = FormatDuration(displayDuration);
     }
 
     // -------------------------------------------------------------------------
@@ -1279,15 +1253,6 @@ public sealed class MainForm : Form
             : $"{(int)d.TotalMinutes}:{d.Seconds:D2}";
     }
 
-    private static string FormatDuration(TimeSpan duration)
-    {
-        if (duration.TotalHours >= 1)
-            return $"{(int)duration.TotalHours}h {duration.Minutes:D2}m {duration.Seconds:D2}s";
-        if (duration.TotalMinutes >= 1)
-            return $"{(int)duration.TotalMinutes}m {duration.Seconds:D2}s";
-        return $"{duration.Seconds}s";
-    }
-
     private void OnProgressBarTick(object? sender, EventArgs e)
     {
         if (_globalBar.Style == ProgressBarStyle.Marquee)
@@ -1313,18 +1278,7 @@ public sealed class MainForm : Form
         if (elapsed.TotalSeconds < 3.0 || _completedFiles < 5)
             return "--:--:--";
 
-        // Priority 1: audio-duration rate — accounts for variable file lengths.
-        double scannedSec = _totalScannedDuration.TotalSeconds;
-        double analyzedSec = _totalDuration.TotalSeconds;
-        if (scannedSec > 0 && analyzedSec > 0)
-        {
-            double rate = analyzedSec / elapsed.TotalSeconds;
-            double remaining = scannedSec - analyzedSec;
-            if (remaining > 0 && rate > 0)
-                return TimeSpan.FromSeconds(remaining / rate).ToString(@"hh\:mm\:ss");
-        }
-
-        // Priority 2: bytes rate.
+        // Priority 1: bytes rate — more accurate than file count for variable sizes.
         long processed = Interlocked.Read(ref _processedBytes);
         if (processed > 0 && _totalBytes > processed)
         {
@@ -1332,7 +1286,7 @@ public sealed class MainForm : Form
             return TimeSpan.FromSeconds((_totalBytes - processed) / rate).ToString(@"hh\:mm\:ss");
         }
 
-        // Priority 3: file count (fallback).
+        // Priority 2: file count (fallback).
         if (_completedFiles > 0)
         {
             double rate = _completedFiles / elapsed.TotalSeconds;
