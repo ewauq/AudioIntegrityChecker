@@ -4,8 +4,8 @@ using Microsoft.Win32;
 namespace AudioIntegrityChecker.UI;
 
 /// <summary>
-/// Persists UI preferences (window size, help panel state, hidden columns)
-/// in the Windows registry under HKCU\Software\AudioIntegrityChecker.
+/// Persists UI preferences (window geometry, help panel, hidden columns,
+/// worker count) in HKCU\Software\AudioIntegrityChecker.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class UserPreferences
@@ -22,8 +22,6 @@ internal sealed class UserPreferences
 
     internal bool WorkerCountAuto { get; set; } = true;
     internal int WorkerCount { get; set; } = Environment.ProcessorCount;
-    internal string LibFlacCustomPath { get; set; } = string.Empty;
-    internal string Mpg123CustomPath { get; set; } = string.Empty;
 
     internal static UserPreferences Load()
     {
@@ -51,8 +49,6 @@ internal sealed class UserPreferences
 
         prefs.WorkerCountAuto = ((int)(key.GetValue("WorkerCountAuto") ?? 1)) == 1;
         prefs.WorkerCount = (int)(key.GetValue("WorkerCount") ?? Environment.ProcessorCount);
-        prefs.LibFlacCustomPath = (string)(key.GetValue("LibFlacCustomPath") ?? string.Empty);
-        prefs.Mpg123CustomPath = (string)(key.GetValue("Mpg123CustomPath") ?? string.Empty);
 
         return prefs;
     }
@@ -69,7 +65,5 @@ internal sealed class UserPreferences
         key.SetValue("HiddenColumns", string.Join(",", HiddenColumns), RegistryValueKind.String);
         key.SetValue("WorkerCountAuto", WorkerCountAuto ? 1 : 0, RegistryValueKind.DWord);
         key.SetValue("WorkerCount", WorkerCount, RegistryValueKind.DWord);
-        key.SetValue("LibFlacCustomPath", LibFlacCustomPath, RegistryValueKind.String);
-        key.SetValue("Mpg123CustomPath", Mpg123CustomPath, RegistryValueKind.String);
     }
 }

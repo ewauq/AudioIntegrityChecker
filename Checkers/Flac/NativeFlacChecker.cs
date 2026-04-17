@@ -464,24 +464,4 @@ internal sealed class NativeFlacChecker : IFormatChecker, IBufferedChecker
         state.ErrorAtSample = state.DecodedSamples;
         state.HasError = true;
     }
-
-    private static bool? _libraryAvailable;
-
-    internal static bool IsLibraryAvailable()
-    {
-        if (_libraryAvailable.HasValue)
-            return _libraryAvailable.Value;
-
-        if (NativeLibrary.TryLoad(LibFlac, out var handle))
-        {
-            NativeLibrary.Free(handle);
-            _libraryAvailable = true;
-        }
-        else
-        {
-            _libraryAvailable = false;
-        }
-
-        return _libraryAvailable.Value;
-    }
 }

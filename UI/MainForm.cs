@@ -449,21 +449,8 @@ public sealed class MainForm : Form
 
     private void RegisterCheckers()
     {
-        _registry.Register(
-            "FLAC",
-            nativeFactory: () => new NativeFlacChecker(),
-            processFactory: () => new ProcessFlacChecker(),
-            nativeAvailable: NativeFlacChecker.IsLibraryAvailable
-        );
-
-        _registry.Register(
-            "MP3",
-            nativeFactory: () => new Mp3Checker(),
-            processFactory: () => new Mp3Checker(),
-            nativeAvailable: () => true // Mp3Checker handles mpg123 absence internally
-        );
-
-        _registry.Build();
+        _registry.Add("flac", new NativeFlacChecker());
+        _registry.Add("mp3", new Mp3Checker());
     }
 
     private void OnDragEnter(object? sender, DragEventArgs e)
