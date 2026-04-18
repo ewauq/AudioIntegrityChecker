@@ -2,10 +2,6 @@ using System.Runtime.Versioning;
 
 namespace AudioIntegrityChecker.UI;
 
-/// <summary>
-/// Modal settings dialog. Currently exposes only the worker count control
-/// (automatic vs manual). Persisted via <see cref="UserPreferences"/>.
-/// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class OptionsForm : Form
 {
@@ -16,9 +12,8 @@ internal sealed class OptionsForm : Form
     private readonly bool _origWorkerCountAuto;
     private readonly int _origWorkerCount;
 
-    private readonly CheckBox _autoThreadsCheck;
-    private readonly TrackBar _threadsTrackBar;
-    private readonly Label _threadsValueLabel;
+    private readonly OptionRow _autoThreadsRow;
+    private readonly OptionRow _workerThreadsRow;
 
     internal OptionsForm(UserPreferences prefs)
     {
@@ -27,115 +22,118 @@ internal sealed class OptionsForm : Form
         _origWorkerCount = prefs.WorkerCount;
 
         Text = "Options";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        FormBorderStyle = FormBorderStyle.Sizable;
+        SizeGripStyle = SizeGripStyle.Auto;
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
         MaximizeBox = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(480, 300);
+        ClientSize = new Size(560, 440);
 
-        var contentHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(16) };
+        int processorCount = Environment.ProcessorCount;
 
-        _autoThreadsCheck = new CheckBox();
-        _threadsTrackBar = new TrackBar();
-        _threadsValueLabel = new Label();
-        BuildPerformancePanel(contentHost);
+        _autoThreadsRow = OptionRow.CheckBox(
+            "Automatic thread count",
+            "Picks the optimal thread count for each scan based on the detected storage type (HDD, SATA SSD, or NVMe)."
+        );
 
+        _workerThreadsRow = OptionRow.Slider(
+            title: "Worker threads",
+            min: 1,
+            max: processorCount,
+            value: Math.Clamp(prefs.WorkerCount, 1, processorCount),
+            description: $"Your CPU has {processorCount} logical cores."
+        );
+
+        var tabControl = BuildTabControl();
         var buttonPanel = BuildButtonPanel();
 
-        Controls.Add(contentHost);
+        Controls.Add(tabControl);
         Controls.Add(buttonPanel);
 
+        WireUpEventHandlers();
         LoadFromPreferences();
     }
 
-    private void BuildPerformancePanel(Panel host)
+    protected override void OnLoad(EventArgs e)
     {
-        var title = new Label
+        base.OnLoad(e);
+        MinimumSize = new Size(
+            480 + (Width - ClientSize.Width),
+            360 + (Height - ClientSize.Height)
+        );
+    }
+
+    private TabControl BuildTabControl()
+    {
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+
+        var performanceTab = new TabPage("Performance")
         {
-            Text = "Performance",
-            Font = new Font(Font.FontFamily, 12f, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(0, 0),
+            Padding = new Padding(20, 16, 20, 16),
+            BackColor = SystemColors.Control,
         };
-        host.Controls.Add(title);
 
-        var threadsHeader = new Label
+        var tabLayout = new TableLayoutPanel
         {
-            Text = "Threads",
-            Font = new Font(Font.FontFamily, 10f, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(0, 42),
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            ColumnCount = 1,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
         };
-        host.Controls.Add(threadsHeader);
+        tabLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        tabLayout.Controls.Add(_autoThreadsRow);
+        tabLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tabLayout.Controls.Add(_workerThreadsRow);
+        tabLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tabLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
-        _autoThreadsCheck.Text = "Automatic (adapt to storage type)";
-        _autoThreadsCheck.AutoSize = true;
-        _autoThreadsCheck.Location = new Point(0, 70);
-        _autoThreadsCheck.CheckedChanged += (_, _) =>
+        performanceTab.Controls.Add(tabLayout);
+        tabs.TabPages.Add(performanceTab);
+
+        return tabs;
+    }
+
+    private Panel BuildButtonPanel()
+    {
+        var panel = new Panel
         {
-            _threadsTrackBar.Enabled = !_autoThreadsCheck.Checked;
-            UpdateThreadsLabel();
+            Dock = DockStyle.Bottom,
+            Height = 56,
+            Padding = new Padding(16, 12, 16, 12),
         };
-        host.Controls.Add(_autoThreadsCheck);
 
-        var autoInfoLabel = new Label
+        var layout = new TableLayoutPanel
         {
-            Text =
-                "Automatic mode picks the optimal thread count based on the storage\n"
-                + "type detected for each scan (HDD, SATA SSD, or NVMe).",
-            AutoSize = true,
-            ForeColor = SystemColors.GrayText,
-            Location = new Point(18, 94),
+            Dock = DockStyle.Fill,
+            ColumnCount = 4,
+            RowCount = 1,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
         };
-        host.Controls.Add(autoInfoLabel);
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-        int processorCount = Environment.ProcessorCount;
-        _threadsTrackBar.Minimum = 1;
-        _threadsTrackBar.Maximum = processorCount;
-        _threadsTrackBar.TickFrequency = 1;
-        _threadsTrackBar.SmallChange = 1;
-        _threadsTrackBar.LargeChange = 2;
-        _threadsTrackBar.Location = new Point(0, 146);
-        _threadsTrackBar.Size = new Size(320, 45);
-        _threadsTrackBar.ValueChanged += (_, _) => UpdateThreadsLabel();
-        host.Controls.Add(_threadsTrackBar);
-
-        _threadsValueLabel.AutoSize = true;
-        _threadsValueLabel.Location = new Point(335, 156);
-        host.Controls.Add(_threadsValueLabel);
-
-        var cpuInfoLabel = new Label
-        {
-            Text = $"Your CPU has {processorCount} logical cores.",
-            AutoSize = true,
-            ForeColor = SystemColors.GrayText,
-            Location = new Point(0, 200),
-        };
-        host.Controls.Add(cpuInfoLabel);
-
-        var applyNoteLabel = new Label
+        var note = new Label
         {
             Text = "Changes apply to the next scan.",
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
-            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Italic),
-            Location = new Point(0, 222),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Anchor = AnchorStyles.Left,
+            Margin = Padding.Empty,
         };
-        host.Controls.Add(applyNoteLabel);
-    }
 
-    private FlowLayoutPanel BuildButtonPanel()
-    {
-        var panel = new FlowLayoutPanel
+        var okBtn = new Button
         {
-            Dock = DockStyle.Bottom,
-            Height = 48,
-            FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(12, 10, 12, 10),
+            Text = "OK",
+            Size = new Size(88, 28),
+            Margin = new Padding(8, 0, 0, 0),
+            Anchor = AnchorStyles.Right,
         };
-
-        var okBtn = new Button { Text = "OK", Size = new Size(90, 28) };
         okBtn.Click += (_, _) =>
         {
             CommitDraft();
@@ -145,7 +143,13 @@ internal sealed class OptionsForm : Form
             Close();
         };
 
-        var cancelBtn = new Button { Text = "Cancel", Size = new Size(90, 28) };
+        var cancelBtn = new Button
+        {
+            Text = "Cancel",
+            Size = new Size(88, 28),
+            Margin = new Padding(8, 0, 0, 0),
+            Anchor = AnchorStyles.Right,
+        };
         cancelBtn.Click += (_, _) =>
         {
             RestoreOriginal();
@@ -153,7 +157,13 @@ internal sealed class OptionsForm : Form
             Close();
         };
 
-        var applyBtn = new Button { Text = "Apply", Size = new Size(90, 28) };
+        var applyBtn = new Button
+        {
+            Text = "Apply",
+            Size = new Size(88, 28),
+            Margin = new Padding(8, 0, 0, 0),
+            Anchor = AnchorStyles.Right,
+        };
         applyBtn.Click += (_, _) =>
         {
             CommitDraft();
@@ -161,9 +171,12 @@ internal sealed class OptionsForm : Form
             SettingsApplied?.Invoke();
         };
 
-        panel.Controls.Add(applyBtn);
-        panel.Controls.Add(cancelBtn);
-        panel.Controls.Add(okBtn);
+        layout.Controls.Add(note, 0, 0);
+        layout.Controls.Add(okBtn, 1, 0);
+        layout.Controls.Add(cancelBtn, 2, 0);
+        layout.Controls.Add(applyBtn, 3, 0);
+
+        panel.Controls.Add(layout);
 
         AcceptButton = okBtn;
         CancelButton = cancelBtn;
@@ -171,22 +184,32 @@ internal sealed class OptionsForm : Form
         return panel;
     }
 
+    private void WireUpEventHandlers()
+    {
+        var autoChk = _autoThreadsRow.CheckBoxControl!;
+        var track = _workerThreadsRow.SliderControl!;
+        autoChk.CheckedChanged += (_, _) =>
+        {
+            track.Enabled = !autoChk.Checked;
+            UpdateThreadsLabel();
+        };
+        track.ValueChanged += (_, _) => UpdateThreadsLabel();
+    }
+
     private void LoadFromPreferences()
     {
-        _autoThreadsCheck.Checked = _prefs.WorkerCountAuto;
-        _threadsTrackBar.Value = Math.Clamp(
-            _prefs.WorkerCount,
-            _threadsTrackBar.Minimum,
-            _threadsTrackBar.Maximum
-        );
-        _threadsTrackBar.Enabled = !_prefs.WorkerCountAuto;
+        var autoChk = _autoThreadsRow.CheckBoxControl!;
+        var track = _workerThreadsRow.SliderControl!;
+        autoChk.Checked = _prefs.WorkerCountAuto;
+        track.Value = Math.Clamp(_prefs.WorkerCount, track.Minimum, track.Maximum);
+        track.Enabled = !_prefs.WorkerCountAuto;
         UpdateThreadsLabel();
     }
 
     private void CommitDraft()
     {
-        _prefs.WorkerCountAuto = _autoThreadsCheck.Checked;
-        _prefs.WorkerCount = _threadsTrackBar.Value;
+        _prefs.WorkerCountAuto = _autoThreadsRow.CheckBoxControl!.Checked;
+        _prefs.WorkerCount = _workerThreadsRow.SliderControl!.Value;
     }
 
     private void RestoreOriginal()
@@ -197,7 +220,9 @@ internal sealed class OptionsForm : Form
 
     private void UpdateThreadsLabel()
     {
-        int value = _autoThreadsCheck.Checked ? Environment.ProcessorCount : _threadsTrackBar.Value;
-        _threadsValueLabel.Text = $"{value} thread{(value == 1 ? "" : "s")}";
+        var autoChk = _autoThreadsRow.CheckBoxControl!;
+        var track = _workerThreadsRow.SliderControl!;
+        int value = autoChk.Checked ? Environment.ProcessorCount : track.Value;
+        _workerThreadsRow.ValueLabel!.Text = $"{value} thread{(value == 1 ? "" : "s")}";
     }
 }
