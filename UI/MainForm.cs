@@ -74,6 +74,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _menuClearList;
     private readonly Image _iconPlay;
     private readonly Image _iconPause;
+    private readonly List<Image> _ownedIcons = [];
 
     private int _countOk;
     private int _countMetadata;
@@ -179,8 +180,8 @@ public sealed class MainForm : Form
             Text = HelpContent.GetWelcomeHtml(),
         };
 
-        _iconPlay = ToolStripIcons.Load(ToolStripIcons.ControlPlay);
-        _iconPause = ToolStripIcons.Load(ToolStripIcons.ControlPause);
+        _iconPlay = LoadOwnedIcon(ToolStripIcons.ControlPlay);
+        _iconPause = LoadOwnedIcon(ToolStripIcons.ControlPause);
 
         _startButton = new ToolStripButton
         {
@@ -196,7 +197,7 @@ public sealed class MainForm : Form
         _cancelButton = new ToolStripButton
         {
             Text = "Cancel",
-            Image = ToolStripIcons.Load(ToolStripIcons.Cancel),
+            Image = LoadOwnedIcon(ToolStripIcons.Cancel),
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
             TextImageRelation = TextImageRelation.ImageBeforeText,
             ImageScaling = ToolStripItemImageScaling.None,
@@ -207,7 +208,7 @@ public sealed class MainForm : Form
         _clearButton = new ToolStripButton
         {
             Text = "Clear",
-            Image = ToolStripIcons.Load(ToolStripIcons.BinEmpty),
+            Image = LoadOwnedIcon(ToolStripIcons.BinEmpty),
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
             TextImageRelation = TextImageRelation.ImageBeforeText,
             ImageScaling = ToolStripItemImageScaling.None,
@@ -218,7 +219,7 @@ public sealed class MainForm : Form
         _helpPanelButton = new ToolStripButton
         {
             Text = "Hide help panel",
-            Image = ToolStripIcons.Load(ToolStripIcons.Help),
+            Image = LoadOwnedIcon(ToolStripIcons.Help),
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
             TextImageRelation = TextImageRelation.ImageBeforeText,
             ImageScaling = ToolStripItemImageScaling.None,
@@ -229,7 +230,7 @@ public sealed class MainForm : Form
         var optionsToolBtn = new ToolStripButton
         {
             Text = "Options",
-            Image = ToolStripIcons.Load(ToolStripIcons.Cog),
+            Image = LoadOwnedIcon(ToolStripIcons.Cog),
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
             TextImageRelation = TextImageRelation.ImageBeforeText,
             ImageScaling = ToolStripItemImageScaling.None,
@@ -240,7 +241,7 @@ public sealed class MainForm : Form
         var btnAddFolder = new ToolStripButton
         {
             Text = "Add folder",
-            Image = ToolStripIcons.Load(ToolStripIcons.FolderAdd),
+            Image = LoadOwnedIcon(ToolStripIcons.FolderAdd),
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
             TextImageRelation = TextImageRelation.ImageBeforeText,
             ImageScaling = ToolStripItemImageScaling.None,
@@ -250,7 +251,7 @@ public sealed class MainForm : Form
         var btnAddFiles = new ToolStripButton
         {
             Text = "Add files",
-            Image = ToolStripIcons.Load(ToolStripIcons.PageWhiteAdd),
+            Image = LoadOwnedIcon(ToolStripIcons.PageWhiteAdd),
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
             TextImageRelation = TextImageRelation.ImageBeforeText,
             ImageScaling = ToolStripItemImageScaling.None,
@@ -1482,12 +1483,22 @@ public sealed class MainForm : Form
             SendMessage(Handle, WM_SETICON, ICON_BIG, _bigIcon.Handle);
     }
 
+    private Image LoadOwnedIcon(string resourceName)
+    {
+        var icon = ToolStripIcons.Load(resourceName);
+        _ownedIcons.Add(icon);
+        return icon;
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
             _smallIcon?.Dispose();
             _bigIcon?.Dispose();
+            foreach (var icon in _ownedIcons)
+                icon.Dispose();
+            _ownedIcons.Clear();
         }
         base.Dispose(disposing);
     }
