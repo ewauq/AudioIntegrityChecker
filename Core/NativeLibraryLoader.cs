@@ -16,6 +16,13 @@ internal static class NativeLibraryLoader
     private const string LibFlacName = "libFLAC.dll";
     private const string Mpg123Name = "mpg123.dll";
 
+    // Symbols that every real build of each library must export. Used to tell
+    // a genuine libFLAC / mpg123 apart from an unrelated DLL that a user might
+    // accidentally (or maliciously) point at: a loadable-but-wrong DLL would
+    // pass a file-name check and then crash at the first P/Invoke.
+    private const string LibFlacProbeSymbol = "FLAC__stream_decoder_new";
+    private const string Mpg123ProbeSymbol = "mpg123_init";
+
     private static readonly object _lock = new();
     private static bool _resolverRegistered;
     private static IntPtr _libFlacHandle;
@@ -33,8 +40,8 @@ internal static class NativeLibraryLoader
                 _resolverRegistered = true;
             }
 
-            SyncHandle(libFlacPath, ref _libFlacHandle, ref _libFlacLoadedFrom);
-            SyncHandle(mpg123Path, ref _mpg123Handle, ref _mpg123LoadedFrom);
+            SyncHandle(libFlacPath, LibFlacProbeSymbol, ref _libFlacHandle, ref _libFlacLoadedFrom);
+            SyncHandle(mpg123Path, Mpg123ProbeSymbol, ref _mpg123Handle, ref _mpg123LoadedFrom);
         }
     }
 
@@ -43,16 +50,16 @@ internal static class NativeLibraryLoader
     /// resolvable through the default Windows DLL search path.
     /// </summary>
     public static bool IsLibFlacAvailable(string configuredPath) =>
-        IsAvailable(configuredPath, LibFlacName);
+        IsAvailable(configuredPath, LibFlacName, LibFlacProbeSymbol);
 
     public static bool IsMpg123Available(string configuredPath) =>
-        IsAvailable(configuredPath, Mpg123Name);
+        IsAvailable(configuredPath, Mpg123Name, Mpg123ProbeSymbol);
 
     public static NativeLibraryStatus ValidateLibFlac(string configuredPath) =>
-        Validate(configuredPath, LibFlacName);
+        Validate(configuredPath, LibFlacName, LibFlacProbeSymbol);
 
     public static NativeLibraryStatus ValidateMpg123(string configuredPath) =>
-        Validate(configuredPath, Mpg123Name);
+        Validate(configuredPath, Mpg123Name, Mpg123ProbeSymbol);
 
     public static NativeLibraryMetadata? GetLibFlacMetadata(string configuredPath) =>
         GetMetadata(configuredPath, LibFlacName);
@@ -169,11 +176,15 @@ internal static class NativeLibraryLoader
     /// loadable; Missing means no path is configured and the default search
     /// does not locate the library.
     /// </summary>
-    private static NativeLibraryStatus Validate(string configuredPath, string defaultName)
+    private static NativeLibraryStatus Validate(
+        string configuredPath,
+        string defaultName,
+        string probeSymbol
+    )
     {
         if (string.IsNullOrWhiteSpace(configuredPath))
         {
-            if (NativeLibrary.TryLoad(defaultName, out var handle))
+            if (TryLoadMatching(defaultName, probeSymbol, out var handle))
             {
                 NativeLibrary.Free(handle);
                 return NativeLibraryStatus.Found;
@@ -184,19 +195,41 @@ internal static class NativeLibraryLoader
         if (!File.Exists(configuredPath))
             return NativeLibraryStatus.Error;
 
-        try
+        if (TryLoadMatching(configuredPath, probeSymbol, out var h))
         {
-            var handle = NativeLibrary.Load(configuredPath);
-            NativeLibrary.Free(handle);
+            NativeLibrary.Free(h);
             return NativeLibraryStatus.Found;
         }
-        catch
-        {
-            return NativeLibraryStatus.Error;
-        }
+        return NativeLibraryStatus.Error;
     }
 
-    private static void SyncHandle(string path, ref IntPtr handle, ref string? loadedFrom)
+    /// <summary>
+    /// Load the library and only keep the handle if it exports the expected
+    /// probe symbol. Rejects unrelated DLLs that happen to load but would
+    /// crash at the first P/Invoke.
+    /// </summary>
+    private static bool TryLoadMatching(string nameOrPath, string probeSymbol, out IntPtr handle)
+    {
+        if (!NativeLibrary.TryLoad(nameOrPath, out handle))
+        {
+            handle = IntPtr.Zero;
+            return false;
+        }
+        if (!NativeLibrary.TryGetExport(handle, probeSymbol, out _))
+        {
+            NativeLibrary.Free(handle);
+            handle = IntPtr.Zero;
+            return false;
+        }
+        return true;
+    }
+
+    private static void SyncHandle(
+        string path,
+        string probeSymbol,
+        ref IntPtr handle,
+        ref string? loadedFrom
+    )
     {
         // Once a native library is resolved for the process, never free or swap it.
         // The CLR caches DllImport resolutions per (assembly, library name), and any
@@ -209,12 +242,12 @@ internal static class NativeLibraryLoader
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             return;
 
-        try
+        if (TryLoadMatching(path, probeSymbol, out var h))
         {
-            handle = NativeLibrary.Load(path);
+            handle = h;
             loadedFrom = path;
         }
-        catch
+        else
         {
             handle = IntPtr.Zero;
             loadedFrom = null;
@@ -237,8 +270,11 @@ internal static class NativeLibraryLoader
         return IntPtr.Zero; // fall through to default Windows search
     }
 
-    private static bool IsAvailable(string configuredPath, string defaultName) =>
-        Validate(configuredPath, defaultName) == NativeLibraryStatus.Found;
+    private static bool IsAvailable(
+        string configuredPath,
+        string defaultName,
+        string probeSymbol
+    ) => Validate(configuredPath, defaultName, probeSymbol) == NativeLibraryStatus.Found;
 }
 
 internal enum NativeLibraryStatus
