@@ -748,6 +748,9 @@ public sealed class MainForm : Form
         if (_queuedFiles.Count == 0)
             return;
 
+        if (!ValidateNativeLibrariesForQueue())
+            return;
+
         SetAnalysisState(AnalysisState.Analysing);
         _countOk = 0;
         _countMetadata = 0;
@@ -826,6 +829,57 @@ public sealed class MainForm : Form
             ShowGlobalBar(false);
             _ = Task.Run(TrimWorkingSet);
         }
+    }
+
+    private bool ValidateNativeLibrariesForQueue()
+    {
+        var prefs = UserPreferences.Load();
+        bool libFlacOk = NativeLibraryLoader.IsLibFlacAvailable(prefs.LibFlacPath);
+        bool mpg123Ok = NativeLibraryLoader.IsMpg123Available(prefs.Mpg123Path);
+
+        var formatsInQueue = _queuedFiles
+            .Select(f => f.Checker.FormatId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var missingByFormat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (formatsInQueue.Contains("FLAC") && !libFlacOk)
+            missingByFormat["FLAC"] = "libFLAC.dll";
+        if (formatsInQueue.Contains("MP3") && !mpg123Ok)
+            missingByFormat["MP3"] = "mpg123.dll";
+
+        if (missingByFormat.Count == 0)
+            return true;
+
+        var errorColor = ResultFormatting.GetSeverityColor(ResultSeverity.High);
+        foreach (ListViewItem item in _listView.Items)
+        {
+            string format = item.SubItems[ColFormat].Text;
+            if (!missingByFormat.TryGetValue(format, out string? lib))
+                continue;
+            item.SubItems[ColResult].Text = "ERROR";
+            item.SubItems[ColSeverity].Text = ResultSeverity.High.ToString();
+            item.SubItems[ColSeverity].ForeColor = errorColor;
+            item.SubItems[ColMessage].Text = $"Missing native library: {lib}";
+            item.SubItems[ColError].Text =
+                "Configure the path in File > Options > Native libraries.";
+        }
+
+        string missingList = string.Join(
+            "\n  • ",
+            missingByFormat.Select(kv => $"{kv.Value} (required for {kv.Key} files)")
+        );
+        MessageBox.Show(
+            this,
+            "Cannot start scan: required native libraries are missing.\n\n"
+                + $"Missing:\n  • {missingList}\n\n"
+                + "Configure the path from File > Options > Native libraries, or\n"
+                + "remove the affected files from the queue before retrying.",
+            "Missing native libraries",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error
+        );
+
+        return false;
     }
 
     private void PauseAnalysis()
