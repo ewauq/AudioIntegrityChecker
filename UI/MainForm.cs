@@ -71,6 +71,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _menuViewHelpPanel;
     private readonly ToolStripMenuItem _menuScanStart;
     private readonly ToolStripMenuItem _menuScanCancel;
+    private readonly ToolStripMenuItem _menuClearList;
     private readonly Image _iconPlay;
     private readonly Image _iconPause;
 
@@ -318,9 +319,10 @@ public sealed class MainForm : Form
         {
             ShortcutKeys = Keys.Control | Keys.Shift | Keys.O,
         };
-        var menuClear = new ToolStripMenuItem("Clear list", null, (_, _) => OnClear())
+        _menuClearList = new ToolStripMenuItem("Clear list", null, (_, _) => OnClear())
         {
             ShortcutKeys = Keys.Control | Keys.L,
+            Enabled = false,
         };
         var menuOptions = new ToolStripMenuItem("Options…", null, OnMenuOptions)
         {
@@ -332,7 +334,7 @@ public sealed class MainForm : Form
             menuAddFiles,
             menuAddFolder,
             new ToolStripSeparator(),
-            menuClear,
+            _menuClearList,
             new ToolStripSeparator(),
             menuOptions,
             new ToolStripSeparator(),
@@ -1219,6 +1221,7 @@ public sealed class MainForm : Form
         _cancelButton.Enabled = active;
         _menuScanCancel.Enabled = active;
         _clearButton.Enabled = !active && hasItems;
+        _menuClearList.Enabled = !active && hasItems;
 
         string startText = state switch
         {
