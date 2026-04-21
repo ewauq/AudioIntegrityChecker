@@ -22,6 +22,10 @@ internal static class ToolStripIcons
         using var stream = asm.GetManifestResourceStream(resourceName);
         if (stream is null)
             throw new InvalidOperationException($"Embedded icon not found: {resourceName}");
-        return Image.FromStream(stream);
+        // Image.FromStream keeps a reference on the stream for the image's lifetime,
+        // so it must not be disposed while the image is in use. Clone the decoded
+        // image into a standalone bitmap and let the stream close immediately.
+        using var decoded = Image.FromStream(stream);
+        return new Bitmap(decoded);
     }
 }
