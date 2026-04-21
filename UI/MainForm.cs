@@ -322,12 +322,19 @@ public sealed class MainForm : Form
         {
             ShortcutKeys = Keys.Control | Keys.L,
         };
+        var menuOptions = new ToolStripMenuItem("Options…", null, OnMenuOptions)
+        {
+            ShortcutKeys = Keys.Control | Keys.Oemcomma,
+            ShortcutKeyDisplayString = "Ctrl+,",
+        };
         var menuExit = new ToolStripMenuItem("Exit", null, (_, _) => Close());
         menuFile.DropDownItems.AddRange([
             menuAddFiles,
             menuAddFolder,
             new ToolStripSeparator(),
             menuClear,
+            new ToolStripSeparator(),
+            menuOptions,
             new ToolStripSeparator(),
             menuExit,
         ]);
@@ -359,14 +366,6 @@ public sealed class MainForm : Form
             menuResetColumns,
         ]);
 
-        var menuTools = new ToolStripMenuItem("&Tools");
-        var menuOptions = new ToolStripMenuItem("Options…", null, OnMenuOptions)
-        {
-            ShortcutKeys = Keys.Control | Keys.Oemcomma,
-            ShortcutKeyDisplayString = "Ctrl+,",
-        };
-        menuTools.DropDownItems.Add(menuOptions);
-
         var menuHelp = new ToolStripMenuItem("&Help");
         var menuKeyboardShortcuts = new ToolStripMenuItem(
             "Keyboard shortcuts",
@@ -386,7 +385,7 @@ public sealed class MainForm : Form
         ]);
 
         _menuStrip = new MenuStrip();
-        _menuStrip.Items.AddRange([menuFile, menuScan, menuView, menuTools, menuHelp]);
+        _menuStrip.Items.AddRange([menuFile, menuScan, menuView, menuHelp]);
 
         // ---- Column header context menu ----
         BuildColumnHeaderContextMenu();
@@ -1013,6 +1012,7 @@ public sealed class MainForm : Form
             + "    Ctrl+O              Add files\n"
             + "    Ctrl+Shift+O   Add folder\n"
             + "    Ctrl+L              Clear list\n"
+            + "    Ctrl+,              Options\n"
             + "\n"
             + "Scan\n"
             + "    F5                    Start / Pause / Resume\n"
@@ -1020,9 +1020,6 @@ public sealed class MainForm : Form
             + "\n"
             + "View\n"
             + "    F9                    Toggle help panel\n"
-            + "\n"
-            + "Tools\n"
-            + "    Ctrl+,              Options\n"
             + "\n"
             + "Help\n"
             + "    Shift+F1          Keyboard shortcuts\n"
