@@ -196,14 +196,11 @@ internal static class NativeLibraryLoader
 
     private static void SyncHandle(string path, ref IntPtr handle, ref string? loadedFrom)
     {
-        // Free previously loaded custom handle if the path changed (including emptied).
-        if (handle != IntPtr.Zero && path != loadedFrom)
-        {
-            NativeLibrary.Free(handle);
-            handle = IntPtr.Zero;
-            loadedFrom = null;
-        }
-
+        // Once a native library is resolved for the process, never free or swap it.
+        // The CLR caches DllImport resolutions per (assembly, library name), and any
+        // P/Invoke that already bound to this handle holds cached function pointers
+        // into it; unloading would leave dangling pointers. To switch paths, the user
+        // must restart the application.
         if (handle != IntPtr.Zero)
             return;
 
