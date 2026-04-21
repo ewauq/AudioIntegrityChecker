@@ -331,10 +331,9 @@ internal sealed class OptionsForm : Form
 
         string baseMessage = status switch
         {
-            NativeLibraryStatus.Valid when empty =>
-                "DLL found via the default Windows search path.",
+            NativeLibraryStatus.Valid when empty => "DLL found in PATH.",
             NativeLibraryStatus.Valid => "DLL is present and loadable.",
-            _ when empty => "DLL not found in the default Windows search path.",
+            _ when empty => "DLL not found in PATH.",
             _ => "File not found or not a loadable DLL.",
         };
 
