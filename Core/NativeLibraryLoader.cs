@@ -62,17 +62,23 @@ internal static class NativeLibraryLoader
         Validate(configuredPath, Mpg123Name, Mpg123ProbeSymbol);
 
     public static NativeLibraryMetadata? GetLibFlacMetadata(string configuredPath) =>
-        GetMetadata(configuredPath, LibFlacName);
+        GetMetadata(configuredPath, LibFlacName, ReadLibFlacVersion);
 
     public static NativeLibraryMetadata? GetMpg123Metadata(string configuredPath) =>
-        GetMetadata(configuredPath, Mpg123Name);
+        GetMetadata(configuredPath, Mpg123Name, ReadMpg123Version);
 
     /// <summary>
     /// Resolves the DLL to an on-disk path (user-configured first, app folder
     /// second) and extracts its file version plus a best-effort build date
     /// from the PE header. Returns null when no readable DLL can be located.
+    /// Falls back to a library-specific runtime probe when the PE resources
+    /// carry no version info (the case for most Xiph/mpg123 MinGW builds).
     /// </summary>
-    private static NativeLibraryMetadata? GetMetadata(string configuredPath, string defaultName)
+    private static NativeLibraryMetadata? GetMetadata(
+        string configuredPath,
+        string defaultName,
+        Func<string, string?> runtimeVersionProbe
+    )
     {
         string? path = ResolvePhysicalPath(configuredPath, defaultName);
         if (path is null)
@@ -88,6 +94,15 @@ internal static class NativeLibraryLoader
         }
         catch { }
 
+        if (string.IsNullOrEmpty(version))
+        {
+            try
+            {
+                version = runtimeVersionProbe(path);
+            }
+            catch { }
+        }
+
         DateTime? buildDate = ReadPeTimestampUtc(path);
         if (buildDate is null)
         {
@@ -100,6 +115,62 @@ internal static class NativeLibraryLoader
 
         return new NativeLibraryMetadata(version, buildDate);
     }
+
+    /// <summary>
+    /// Reads the <c>FLAC__VERSION_STRING</c> exported symbol (a
+    /// <c>const char *</c>) to recover a version string like "1.5.0" when
+    /// the PE file has no VERSIONINFO resource.
+    /// </summary>
+    private static string? ReadLibFlacVersion(string path)
+    {
+        if (!NativeLibrary.TryLoad(path, out IntPtr handle))
+            return null;
+        try
+        {
+            if (!NativeLibrary.TryGetExport(handle, "FLAC__VERSION_STRING", out IntPtr sym))
+                return null;
+            // The exported symbol points at a `const char *` variable, so one
+            // pointer-dereference gets us the address of the actual string.
+            IntPtr strPtr = Marshal.ReadIntPtr(sym);
+            if (strPtr == IntPtr.Zero)
+                return null;
+            return Marshal.PtrToStringAnsi(strPtr);
+        }
+        finally
+        {
+            NativeLibrary.Free(handle);
+        }
+    }
+
+    /// <summary>
+    /// Calls <c>mpg123_distversion(major, minor, patch)</c> to recover a
+    /// runtime version string from mpg123 when VERSIONINFO is missing.
+    /// </summary>
+    private static string? ReadMpg123Version(string path)
+    {
+        if (!NativeLibrary.TryLoad(path, out IntPtr handle))
+            return null;
+        try
+        {
+            if (!NativeLibrary.TryGetExport(handle, "mpg123_distversion", out IntPtr sym))
+                return null;
+            var distversion = Marshal.GetDelegateForFunctionPointer<Mpg123DistVersionDelegate>(sym);
+            uint major = 0,
+                minor = 0,
+                patch = 0;
+            distversion(ref major, ref minor, ref patch);
+            if (major == 0 && minor == 0 && patch == 0)
+                return null;
+            return $"{major}.{minor}.{patch}";
+        }
+        finally
+        {
+            NativeLibrary.Free(handle);
+        }
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void Mpg123DistVersionDelegate(ref uint major, ref uint minor, ref uint patch);
 
     private static string? ResolvePhysicalPath(string configuredPath, string defaultName)
     {
