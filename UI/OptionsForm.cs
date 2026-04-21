@@ -22,6 +22,7 @@ internal sealed class OptionsForm : Form
 
     private Image? _statusValidIcon;
     private Image? _statusInvalidIcon;
+    private Image? _infoIcon;
 
     internal OptionsForm(UserPreferences prefs)
     {
@@ -97,6 +98,7 @@ internal sealed class OptionsForm : Form
         {
             _statusValidIcon?.Dispose();
             _statusInvalidIcon?.Dispose();
+            _infoIcon?.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -145,7 +147,7 @@ internal sealed class OptionsForm : Form
         librariesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         librariesLayout.Controls.Add(_mpg123Row);
         librariesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        librariesLayout.Controls.Add(BuildFallbackCallout());
+        librariesLayout.Controls.Add(BuildFallbackNote());
         librariesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         librariesLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
         librariesTab.Controls.Add(librariesLayout);
@@ -366,17 +368,29 @@ internal sealed class OptionsForm : Form
         _toolTip.SetToolTip(label, tooltip);
     }
 
-    private static Control BuildFallbackCallout()
+    private Control BuildFallbackNote()
     {
-        var callout = new Panel
+        _infoIcon ??= ToolStripIcons.Load(ToolStripIcons.Information);
+
+        var row = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Color.White,
-            BorderStyle = BorderStyle.FixedSingle,
-            Padding = new Padding(12, 10, 12, 10),
+            ColumnCount = 2,
             Margin = new Padding(0, 8, 0, 0),
+            Padding = Padding.Empty,
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        var pic = new PictureBox
+        {
+            Image = _infoIcon,
+            Size = new Size(16, 16),
+            SizeMode = PictureBoxSizeMode.CenterImage,
+            Margin = new Padding(0, 2, 6, 0),
+            Anchor = AnchorStyles.Left | AnchorStyles.Top,
         };
         var text = new Label
         {
@@ -387,9 +401,11 @@ internal sealed class OptionsForm : Form
             ForeColor = SystemColors.GrayText,
             MaximumSize = new Size(480, 0),
             Margin = Padding.Empty,
+            Anchor = AnchorStyles.Left | AnchorStyles.Top,
         };
-        callout.Controls.Add(text);
-        return callout;
+        row.Controls.Add(pic, 0, 0);
+        row.Controls.Add(text, 1, 0);
+        return row;
     }
 
     private static string FormatMetadata(NativeLibraryMetadata? meta)

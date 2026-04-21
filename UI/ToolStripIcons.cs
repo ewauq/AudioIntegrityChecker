@@ -15,6 +15,7 @@ internal static class ToolStripIcons
     public const string Cog = "cog.png";
     public const string AcceptButton = "accept_button.png";
     public const string Cross = "cross.png";
+    public const string Information = "information.png";
 
     public static Image Load(string resourceName)
     {
