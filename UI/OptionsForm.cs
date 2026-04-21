@@ -60,14 +60,14 @@ internal sealed class OptionsForm : Form
             title: "libFLAC.dll",
             initialValue: prefs.LibFlacPath,
             fileFilter: dllFilter,
-            description: "Path to libFLAC.dll (FLAC native decoder, https://xiph.org/flac/). Leave empty to use the DLL placed next to the executable or in the system PATH."
+            description: "Path to libFLAC.dll (FLAC native decoder, https://xiph.org/flac/).\nLeave empty to use the DLL placed next to the executable or in the system PATH."
         );
 
         _mpg123Row = OptionRow.FilePath(
             title: "mpg123.dll",
             initialValue: prefs.Mpg123Path,
             fileFilter: dllFilter,
-            description: "Path to mpg123.dll (MP3 native decoder, https://mpg123.org/). Leave empty to use the DLL placed next to the executable or in the system PATH."
+            description: "Path to mpg123.dll (MP3 native decoder, https://mpg123.org/).\nLeave empty to use the DLL placed next to the executable or in the system PATH."
         );
 
         var tabControl = BuildTabControl();
