@@ -61,14 +61,14 @@ internal sealed class OptionsForm : Form
             title: "libFLAC.dll",
             initialValue: prefs.LibFlacPath,
             fileFilter: dllFilter,
-            description: "FLAC native decoder — https://xiph.org/flac/"
+            description: "FLAC native decoder - https://xiph.org/flac/"
         );
 
         _mpg123Row = OptionRow.FilePath(
             title: "mpg123.dll",
             initialValue: prefs.Mpg123Path,
             fileFilter: dllFilter,
-            description: "MP3 native decoder — https://mpg123.org/"
+            description: "MP3 native decoder - https://mpg123.org/"
         );
 
         var tabControl = BuildTabControl();
@@ -309,23 +309,11 @@ internal sealed class OptionsForm : Form
 
     private void RefreshNativeLibraryStatus()
     {
-        ApplyStatus(
-            _libFlacRow,
-            NativeLibraryLoader.ValidateLibFlac,
-            NativeLibraryLoader.GetLibFlacMetadata
-        );
-        ApplyStatus(
-            _mpg123Row,
-            NativeLibraryLoader.ValidateMpg123,
-            NativeLibraryLoader.GetMpg123Metadata
-        );
+        ApplyStatus(_libFlacRow, NativeLibraryLoader.ValidateLibFlac);
+        ApplyStatus(_mpg123Row, NativeLibraryLoader.ValidateMpg123);
     }
 
-    private void ApplyStatus(
-        OptionRow row,
-        Func<string, NativeLibraryStatus> validator,
-        Func<string, NativeLibraryMetadata?> metadataReader
-    )
+    private void ApplyStatus(OptionRow row, Func<string, NativeLibraryStatus> validator)
     {
         var textBox = row.TextBoxControl!;
         var pic = row.StatusPicture!;
@@ -339,9 +327,7 @@ internal sealed class OptionsForm : Form
             case NativeLibraryStatus.Found:
                 pic.Image = _statusValidIcon;
                 label.ForeColor = Color.ForestGreen;
-                string baseFound = empty ? "Found in PATH" : "Found";
-                string extra = FormatMetadata(metadataReader(path));
-                label.Text = string.IsNullOrEmpty(extra) ? baseFound : $"{baseFound} — {extra}";
+                label.Text = empty ? "Found in PATH" : "Found";
                 break;
 
             case NativeLibraryStatus.Missing:
@@ -397,17 +383,5 @@ internal sealed class OptionsForm : Form
         row.Controls.Add(pic, 0, 0);
         row.Controls.Add(text, 1, 0);
         return row;
-    }
-
-    private static string FormatMetadata(NativeLibraryMetadata? meta)
-    {
-        if (meta is null)
-            return string.Empty;
-        var parts = new List<string>(2);
-        if (!string.IsNullOrEmpty(meta.Value.Version))
-            parts.Add($"version {meta.Value.Version}");
-        if (meta.Value.BuildDateUtc is DateTime d)
-            parts.Add(d.ToString("dd/MM/yyyy"));
-        return string.Join(" — ", parts);
     }
 }
