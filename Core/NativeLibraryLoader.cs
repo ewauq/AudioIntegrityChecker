@@ -163,9 +163,11 @@ internal static class NativeLibraryLoader
     }
 
     /// <summary>
-    /// Returns Valid when the library is loadable either from the user-configured
-    /// path or, if empty, from the default Windows DLL search path. Invalid
-    /// otherwise (path configured but unloadable, or search-path fallback fails).
+    /// Classifies the availability of a native library. Found means it loads
+    /// (either from the configured path or from the Windows default search);
+    /// Error means a path was configured but the file is missing or not
+    /// loadable; Missing means no path is configured and the default search
+    /// does not locate the library.
     /// </summary>
     private static NativeLibraryStatus Validate(string configuredPath, string defaultName)
     {
@@ -174,23 +176,23 @@ internal static class NativeLibraryLoader
             if (NativeLibrary.TryLoad(defaultName, out var handle))
             {
                 NativeLibrary.Free(handle);
-                return NativeLibraryStatus.Valid;
+                return NativeLibraryStatus.Found;
             }
-            return NativeLibraryStatus.Invalid;
+            return NativeLibraryStatus.Missing;
         }
 
         if (!File.Exists(configuredPath))
-            return NativeLibraryStatus.Invalid;
+            return NativeLibraryStatus.Error;
 
         try
         {
             var handle = NativeLibrary.Load(configuredPath);
             NativeLibrary.Free(handle);
-            return NativeLibraryStatus.Valid;
+            return NativeLibraryStatus.Found;
         }
         catch
         {
-            return NativeLibraryStatus.Invalid;
+            return NativeLibraryStatus.Error;
         }
     }
 
@@ -236,13 +238,19 @@ internal static class NativeLibraryLoader
     }
 
     private static bool IsAvailable(string configuredPath, string defaultName) =>
-        Validate(configuredPath, defaultName) == NativeLibraryStatus.Valid;
+        Validate(configuredPath, defaultName) == NativeLibraryStatus.Found;
 }
 
 internal enum NativeLibraryStatus
 {
-    Valid,
-    Invalid,
+    /// <summary>Library is loadable (configured path or default search).</summary>
+    Found,
+
+    /// <summary>No path configured and the library is not in the default search path.</summary>
+    Missing,
+
+    /// <summary>A path was configured but the file is missing or not loadable.</summary>
+    Error,
 }
 
 internal readonly record struct NativeLibraryMetadata(string? Version, DateTime? BuildDateUtc);

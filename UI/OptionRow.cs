@@ -15,6 +15,7 @@ internal sealed class OptionRow : UserControl
     public Label? DescriptionLabel { get; private set; }
     public TextBox? TextBoxControl { get; private set; }
     public PictureBox? StatusPicture { get; private set; }
+    public Label? StatusLabel { get; private set; }
 
     private OptionRow()
     {
@@ -171,11 +172,12 @@ internal sealed class OptionRow : UserControl
             Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 3,
+            ColumnCount = 4,
             Margin = Padding.Empty,
             Padding = Padding.Empty,
         };
         inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
@@ -193,7 +195,7 @@ internal sealed class OptionRow : UserControl
             Text = "Browse…",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Margin = new Padding(0, 0, 6, 0),
+            Margin = new Padding(0, 0, 8, 0),
             Padding = new Padding(6, 0, 6, 0),
         };
         browseBtn.Click += (_, _) =>
@@ -221,33 +223,81 @@ internal sealed class OptionRow : UserControl
         {
             Size = new Size(16, 16),
             SizeMode = PictureBoxSizeMode.CenterImage,
-            Margin = new Padding(0, 4, 0, 0),
+            Margin = new Padding(0, 4, 4, 0),
             Anchor = AnchorStyles.Left,
         };
         row.StatusPicture = statusPic;
 
+        var statusLbl = new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 5, 0, 0),
+            Anchor = AnchorStyles.Left,
+            Font = new Font(SystemFonts.MessageBoxFont!, FontStyle.Bold),
+        };
+        row.StatusLabel = statusLbl;
+
         inputRow.Controls.Add(textBox, 0, 0);
         inputRow.Controls.Add(browseBtn, 1, 0);
         inputRow.Controls.Add(statusPic, 2, 0);
+        inputRow.Controls.Add(statusLbl, 3, 0);
 
         row._layout.Controls.Add(inputRow);
         row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         if (!string.IsNullOrEmpty(description))
         {
-            var desc = new Label
-            {
-                Text = description,
-                AutoSize = true,
-                MaximumSize = new Size(DescriptionMaxWidth, 0),
-                ForeColor = SystemColors.GrayText,
-                Margin = new Padding(0, 4, 0, 0),
-            };
-            row.DescriptionLabel = desc;
+            var desc = BuildDescriptionControl(description);
+            row.DescriptionLabel = desc as Label;
+            desc.Margin = new Padding(0, 4, 0, 0);
             row._layout.Controls.Add(desc);
             row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         }
 
         return row;
+    }
+
+    private static Control BuildDescriptionControl(string description)
+    {
+        // Detect an http(s) URL in the description and render it as a clickable
+        // LinkLabel region. Otherwise fall back to a plain gray Label.
+        var match = System.Text.RegularExpressions.Regex.Match(description, @"https?://[^\s)]+");
+        if (!match.Success)
+        {
+            return new Label
+            {
+                Text = description,
+                AutoSize = true,
+                MaximumSize = new Size(DescriptionMaxWidth, 0),
+                ForeColor = SystemColors.GrayText,
+            };
+        }
+
+        var link = new LinkLabel
+        {
+            Text = description,
+            AutoSize = true,
+            MaximumSize = new Size(DescriptionMaxWidth, 0),
+            LinkColor = SystemColors.HotTrack,
+            ActiveLinkColor = SystemColors.HotTrack,
+            LinkBehavior = LinkBehavior.HoverUnderline,
+            Padding = Padding.Empty,
+        };
+        link.LinkArea = new LinkArea(match.Index, match.Length);
+        string url = match.Value;
+        link.LinkClicked += (_, _) =>
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }
+                );
+            }
+            catch { }
+        };
+        // LinkLabel shows its text black by default; match the surrounding gray
+        // for the non-link portion.
+        link.ForeColor = SystemColors.GrayText;
+        return link;
     }
 }

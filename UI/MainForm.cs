@@ -860,8 +860,7 @@ public sealed class MainForm : Form
             item.SubItems[ColSeverity].Text = ResultSeverity.High.ToString();
             item.SubItems[ColSeverity].ForeColor = errorColor;
             item.SubItems[ColMessage].Text = $"Missing native library: {lib}";
-            item.SubItems[ColError].Text =
-                "Configure the path in File > Options > Native libraries.";
+            item.SubItems[ColError].Text = "Configure the path in File > Options > Libraries.";
         }
 
         string missingList = string.Join(
@@ -872,7 +871,7 @@ public sealed class MainForm : Form
             this,
             "Cannot start scan: required native libraries are missing.\n\n"
                 + $"Missing:\n  • {missingList}\n\n"
-                + "Configure the path from File > Options > Native libraries, or\n"
+                + "Configure the path from File > Options > Libraries, or\n"
                 + "remove the affected files from the queue before retrying.",
             "Missing native libraries",
             MessageBoxButtons.OK,

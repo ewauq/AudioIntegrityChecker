@@ -60,14 +60,14 @@ internal sealed class OptionsForm : Form
             title: "libFLAC.dll",
             initialValue: prefs.LibFlacPath,
             fileFilter: dllFilter,
-            description: "Path to libFLAC.dll (FLAC native decoder, https://xiph.org/flac/).\nLeave empty to use the DLL placed next to the executable or in the system PATH."
+            description: "FLAC native decoder — https://xiph.org/flac/"
         );
 
         _mpg123Row = OptionRow.FilePath(
             title: "mpg123.dll",
             initialValue: prefs.Mpg123Path,
             fileFilter: dllFilter,
-            description: "Path to mpg123.dll (MP3 native decoder, https://mpg123.org/).\nLeave empty to use the DLL placed next to the executable or in the system PATH."
+            description: "MP3 native decoder — https://mpg123.org/"
         );
 
         var tabControl = BuildTabControl();
@@ -127,12 +127,12 @@ internal sealed class OptionsForm : Form
         performanceTab.Controls.Add(performanceLayout);
         tabs.TabPages.Add(performanceTab);
 
-        var nativeTab = new TabPage("Native libraries")
+        var librariesTab = new TabPage("Libraries")
         {
             Padding = new Padding(20, 16, 20, 16),
             BackColor = SystemColors.Control,
         };
-        var nativeLayout = new TableLayoutPanel
+        var librariesLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             AutoScroll = true,
@@ -140,14 +140,16 @@ internal sealed class OptionsForm : Form
             Margin = Padding.Empty,
             Padding = Padding.Empty,
         };
-        nativeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        nativeLayout.Controls.Add(_libFlacRow);
-        nativeLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        nativeLayout.Controls.Add(_mpg123Row);
-        nativeLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        nativeLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        nativeTab.Controls.Add(nativeLayout);
-        tabs.TabPages.Add(nativeTab);
+        librariesLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        librariesLayout.Controls.Add(_libFlacRow);
+        librariesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        librariesLayout.Controls.Add(_mpg123Row);
+        librariesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        librariesLayout.Controls.Add(BuildFallbackCallout());
+        librariesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        librariesLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        librariesTab.Controls.Add(librariesLayout);
+        tabs.TabPages.Add(librariesTab);
 
         return tabs;
     }
@@ -325,33 +327,69 @@ internal sealed class OptionsForm : Form
     {
         var textBox = row.TextBoxControl!;
         var pic = row.StatusPicture!;
+        var label = row.StatusLabel!;
         string path = textBox.Text.Trim();
         var status = validator(path);
         bool empty = string.IsNullOrWhiteSpace(path);
 
-        string baseMessage = status switch
+        string tooltip;
+        switch (status)
         {
-            NativeLibraryStatus.Valid when empty => "DLL found in PATH.",
-            NativeLibraryStatus.Valid => "DLL is present and loadable.",
-            _ when empty => "DLL not found in PATH.",
-            _ => "File not found or not a loadable DLL.",
-        };
+            case NativeLibraryStatus.Found:
+                pic.Image = _statusValidIcon;
+                label.Text = "Found";
+                label.ForeColor = Color.ForestGreen;
+                tooltip = empty ? "DLL found in PATH." : "DLL is present and loadable.";
+                var meta = metadataReader(path);
+                string extra = FormatMetadata(meta);
+                if (!string.IsNullOrEmpty(extra))
+                    tooltip = $"{tooltip}\n{extra}";
+                break;
 
-        if (status == NativeLibraryStatus.Valid)
-        {
-            pic.Image = _statusValidIcon;
-            var meta = metadataReader(path);
-            string extra = FormatMetadata(meta);
-            _toolTip.SetToolTip(
-                pic,
-                string.IsNullOrEmpty(extra) ? baseMessage : $"{baseMessage}\n{extra}"
-            );
+            case NativeLibraryStatus.Missing:
+                pic.Image = null;
+                label.Text = "Missing";
+                label.ForeColor = SystemColors.ControlText;
+                tooltip = "Not configured and not available via the default Windows PATH.";
+                break;
+
+            case NativeLibraryStatus.Error:
+            default:
+                pic.Image = _statusInvalidIcon;
+                label.Text = "Error";
+                label.ForeColor = Color.Firebrick;
+                tooltip = "File not found or not a loadable DLL.";
+                break;
         }
-        else
+
+        _toolTip.SetToolTip(pic, tooltip);
+        _toolTip.SetToolTip(label, tooltip);
+    }
+
+    private static Control BuildFallbackCallout()
+    {
+        var callout = new Panel
         {
-            pic.Image = _statusInvalidIcon;
-            _toolTip.SetToolTip(pic, baseMessage);
-        }
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = Color.White,
+            BorderStyle = BorderStyle.FixedSingle,
+            Padding = new Padding(12, 10, 12, 10),
+            Margin = new Padding(0, 8, 0, 0),
+        };
+        var text = new Label
+        {
+            Text =
+                "Leave a path empty to use the DLL placed next to the executable "
+                + "or in the system PATH.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            MaximumSize = new Size(480, 0),
+            Margin = Padding.Empty,
+        };
+        callout.Controls.Add(text);
+        return callout;
     }
 
     private static string FormatMetadata(NativeLibraryMetadata? meta)
