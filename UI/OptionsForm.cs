@@ -334,38 +334,29 @@ internal sealed class OptionsForm : Form
         var status = validator(path);
         bool empty = string.IsNullOrWhiteSpace(path);
 
-        string tooltip;
         switch (status)
         {
             case NativeLibraryStatus.Found:
                 pic.Image = _statusValidIcon;
-                label.Text = "Found";
                 label.ForeColor = Color.ForestGreen;
-                tooltip = empty ? "DLL found in PATH." : "DLL is present and loadable.";
-                var meta = metadataReader(path);
-                string extra = FormatMetadata(meta);
-                if (!string.IsNullOrEmpty(extra))
-                    tooltip = $"{tooltip}\n{extra}";
+                string baseFound = empty ? "Found in PATH" : "Found";
+                string extra = FormatMetadata(metadataReader(path));
+                label.Text = string.IsNullOrEmpty(extra) ? baseFound : $"{baseFound} — {extra}";
                 break;
 
             case NativeLibraryStatus.Missing:
                 pic.Image = null;
-                label.Text = "Missing";
                 label.ForeColor = SystemColors.ControlText;
-                tooltip = "Not configured and not available via the default Windows PATH.";
+                label.Text = "Not found in PATH";
                 break;
 
             case NativeLibraryStatus.Error:
             default:
                 pic.Image = _statusInvalidIcon;
-                label.Text = "Error";
                 label.ForeColor = Color.Firebrick;
-                tooltip = "File not found or not a loadable DLL.";
+                label.Text = "File not found or not a loadable DLL";
                 break;
         }
-
-        _toolTip.SetToolTip(pic, tooltip);
-        _toolTip.SetToolTip(label, tooltip);
     }
 
     private Control BuildFallbackNote()
@@ -414,11 +405,9 @@ internal sealed class OptionsForm : Form
             return string.Empty;
         var parts = new List<string>(2);
         if (!string.IsNullOrEmpty(meta.Value.Version))
-            parts.Add($"Version {meta.Value.Version}");
+            parts.Add($"version {meta.Value.Version}");
         if (meta.Value.BuildDateUtc is DateTime d)
-            parts.Add($"Built {d:yyyy-MM-dd}");
-        return string.Join(" · ", parts);
+            parts.Add(d.ToString("dd/MM/yyyy"));
+        return string.Join(" — ", parts);
     }
-
-    private readonly ToolTip _toolTip = new();
 }
