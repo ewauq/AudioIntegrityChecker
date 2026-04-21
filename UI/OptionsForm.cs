@@ -279,9 +279,12 @@ internal sealed class OptionsForm : Form
     {
         _prefs.WorkerCountAuto = _autoThreadsRow.CheckBoxControl!.Checked;
         _prefs.WorkerCount = _workerThreadsRow.SliderControl!.Value;
+        // Native library paths are persisted here but only take effect after the
+        // next application start: the resolver is configured once in Program.Main
+        // and DllImport resolutions are cached per process. Reconfiguring mid-run
+        // would be unsafe if any scan had already bound to the current handles.
         _prefs.LibFlacPath = _libFlacRow.TextBoxControl!.Text.Trim();
         _prefs.Mpg123Path = _mpg123Row.TextBoxControl!.Text.Trim();
-        NativeLibraryLoader.Configure(_prefs.LibFlacPath, _prefs.Mpg123Path);
     }
 
     private void RestoreOriginal()
