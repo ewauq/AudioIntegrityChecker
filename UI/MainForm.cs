@@ -1478,9 +1478,9 @@ public sealed class MainForm : Form
     {
         base.OnHandleCreated(e);
         if (_smallIcon is not null)
-            SendMessage(Handle, WM_SETICON, ICON_SMALL, _smallIcon.Handle);
+            SendMessage(Handle, WM_SETICON, new IntPtr(ICON_SMALL), _smallIcon.Handle);
         if (_bigIcon is not null)
-            SendMessage(Handle, WM_SETICON, ICON_BIG, _bigIcon.Handle);
+            SendMessage(Handle, WM_SETICON, new IntPtr(ICON_BIG), _bigIcon.Handle);
     }
 
     private Image LoadOwnedIcon(string resourceName)
