@@ -235,17 +235,8 @@ internal static class NativeLibraryLoader
         return IntPtr.Zero; // fall through to default Windows search
     }
 
-    private static bool IsAvailable(string configuredPath, string defaultName)
-    {
-        if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
-            return true;
-        if (NativeLibrary.TryLoad(defaultName, out var handle))
-        {
-            NativeLibrary.Free(handle);
-            return true;
-        }
-        return false;
-    }
+    private static bool IsAvailable(string configuredPath, string defaultName) =>
+        Validate(configuredPath, defaultName) == NativeLibraryStatus.Valid;
 }
 
 internal enum NativeLibraryStatus
