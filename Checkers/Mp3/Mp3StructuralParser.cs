@@ -353,8 +353,8 @@ internal static class Mp3StructuralParser
         | buf[offset + 3];
 
     // -------------------------------------------------------------------------
-    // CRC-16/ARC: poly=0x8005, init=0xFFFF, input reflected, output reflected.
-    // Used for MP3 frame header protection (ISO 11172-3).
+    // CRC-16/MPEG: poly=0x8005, init=0xFFFF, MSB-first, no reflection, no final XOR.
+    // ISO/IEC 11172-3 §2.4.3.1 — MP3 frame header protection.
     // Pass init=0xFFFF to start a new CRC, or a prior return value to continue.
     // -------------------------------------------------------------------------
 
@@ -362,15 +362,13 @@ internal static class Mp3StructuralParser
     {
         for (int i = 0; i < length; i++)
         {
-            byte b = buf[offset + i];
+            crc ^= (ushort)(buf[offset + i] << 8);
             for (int bit = 0; bit < 8; bit++)
             {
-                bool databit = (b & 1) != 0;
-                bool crcBit = (crc & 1) != 0;
-                crc >>= 1;
-                if (databit ^ crcBit)
-                    crc ^= 0xA001; // reflected 0x8005
-                b >>= 1;
+                if ((crc & 0x8000) != 0)
+                    crc = (ushort)((crc << 1) ^ 0x8005);
+                else
+                    crc = (ushort)(crc << 1);
             }
         }
         return crc;
