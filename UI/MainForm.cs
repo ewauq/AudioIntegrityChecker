@@ -797,10 +797,7 @@ public sealed class MainForm : Form
             );
             _analysisStopwatch.Stop();
 
-            string timeText =
-                _analysisStopwatch.Elapsed.TotalSeconds < 60 // format as "Xs" if under a minute, otherwise "Xm YYs"
-                    ? $"{_analysisStopwatch.Elapsed.TotalSeconds:F1}s"
-                    : $"{(int)_analysisStopwatch.Elapsed.TotalMinutes}m {_analysisStopwatch.Elapsed.Seconds:D2}s";
+            string timeText = FormatElapsed(_analysisStopwatch.Elapsed);
             int n = _completedFiles;
             SetStatus($"Processed {(n == 1 ? "1 file" : $"{n} files")} in {timeText}.");
 
@@ -1343,10 +1340,7 @@ public sealed class MainForm : Form
 
     private void ShowCompletionDialog(TimeSpan elapsed)
     {
-        string timeText =
-            elapsed.TotalSeconds < 60
-                ? $"{elapsed.TotalSeconds:F1}s"
-                : $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
+        string timeText = FormatElapsed(elapsed);
 
         var builder = new System.Text.StringBuilder();
         builder.AppendLine(
@@ -1520,6 +1514,15 @@ public sealed class MainForm : Form
         return d.TotalHours >= 1
             ? $"{(int)d.TotalHours}:{d.Minutes:D2}:{d.Seconds:D2}"
             : $"{(int)d.TotalMinutes}:{d.Seconds:D2}";
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed)
+    {
+        if (elapsed.TotalSeconds < 1)
+            return $"{(int)elapsed.TotalMilliseconds}ms";
+        if (elapsed.TotalSeconds < 60)
+            return $"{elapsed.TotalSeconds:F1}s";
+        return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
     }
 
     private void OnProgressBarTick(object? sender, EventArgs e)
