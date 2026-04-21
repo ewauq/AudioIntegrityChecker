@@ -169,19 +169,6 @@ public sealed class MainForm : Form
         _listView.DrawItem += (_, _) => { };
         _listView.DrawSubItem += OnDrawSubItem;
 
-        var listBorderPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(1, 1, 0, 1), // left, top, no right, bottom
-            BackColor = SystemColors.ControlDark,
-        };
-        var listInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
-        listInnerPanel.Controls.Add(_listView);
-        listBorderPanel.Controls.Add(listInnerPanel);
-
-        var listPanel = new Panel { Dock = DockStyle.Fill };
-        listPanel.Controls.Add(listBorderPanel);
-
         var helpBackColor = Color.FromArgb(245, 245, 245);
         _htmlPanel = new HtmlPanel
         {
@@ -190,16 +177,6 @@ public sealed class MainForm : Form
             BackColor = helpBackColor,
             Text = HelpContent.GetWelcomeHtml(),
         };
-
-        var helpBorderPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(0, 1, 1, 1), // no left, top, right, bottom
-            BackColor = SystemColors.ControlDark,
-        };
-        var helpInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = helpBackColor };
-        helpInnerPanel.Controls.Add(_htmlPanel);
-        helpBorderPanel.Controls.Add(helpInnerPanel);
 
         _iconPlay = ToolStripIcons.Load(ToolStripIcons.ControlPlay);
         _iconPause = ToolStripIcons.Load(ToolStripIcons.ControlPause);
@@ -312,8 +289,8 @@ public sealed class MainForm : Form
             SplitterWidth = 1,
             BackColor = SystemColors.ControlDark,
         };
-        _splitContainer.Panel1.Controls.Add(listPanel);
-        _splitContainer.Panel2.Controls.Add(helpBorderPanel);
+        _splitContainer.Panel1.Controls.Add(_listView);
+        _splitContainer.Panel2.Controls.Add(_htmlPanel);
 
         _globalBarWrapper = new Panel
         {
@@ -454,9 +431,17 @@ public sealed class MainForm : Form
             _labelRam.Text = $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}";
         _ramTimer.Start();
 
+        var topSeparator = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 1,
+            BackColor = SystemColors.ControlDark,
+        };
+
         Controls.Add(_splitContainer);
         Controls.Add(_globalBarWrapper);
         Controls.Add(_statusStrip);
+        Controls.Add(topSeparator);
         Controls.Add(_toolStrip);
         Controls.Add(_menuStrip);
         MainMenuStrip = _menuStrip;
