@@ -281,6 +281,14 @@ internal static class Mp3StructuralParser
 
         int lameCrcStored =
             (buf[firstFramePos + LameCrcOffset] << 8) | buf[firstFramePos + LameCrcOffset + 1];
+
+        // A zero CRC means the encoder did not populate the field. Older LAME
+        // releases (≤ 3.90 alpha) and some LAME-clone encoders write the LAME
+        // tag layout but leave the CRC word blank. Treat zero as "not computed"
+        // and skip the check rather than flag every such file as corrupt metadata.
+        if (lameCrcStored == 0)
+            return;
+
         ushort lameCrcComputed = CrcLameTag(buf, firstFramePos, LameCrcCoverage);
 
         if (lameCrcStored != lameCrcComputed)
