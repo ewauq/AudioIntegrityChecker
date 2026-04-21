@@ -171,21 +171,25 @@ internal sealed class OptionRow : UserControl
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
+        var baseFont = SystemFonts.MessageBoxFont!;
         var titleLbl = new Label
         {
             Text = title,
             AutoSize = true,
-            Font = new Font(SystemFonts.MessageBoxFont!, FontStyle.Bold),
+            Font = new Font(baseFont, FontStyle.Bold),
             Margin = Padding.Empty,
+            Padding = Padding.Empty,
             Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
+            UseCompatibleTextRendering = false,
         };
         header.Controls.Add(titleLbl, 0, 0);
 
         if (!string.IsNullOrEmpty(description))
         {
-            var desc = BuildDescriptionControl(" — " + description);
+            var desc = BuildDescriptionControl(" — " + description, baseFont);
             row.DescriptionLabel = desc as Label;
-            desc.Margin = new Padding(0, 0, 0, 0);
+            desc.Margin = Padding.Empty;
+            desc.Padding = Padding.Empty;
             desc.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
             header.Controls.Add(desc, 1, 0);
         }
@@ -289,10 +293,12 @@ internal sealed class OptionRow : UserControl
         return row;
     }
 
-    private static Control BuildDescriptionControl(string description)
+    private static Control BuildDescriptionControl(string description, Font baseFont)
     {
         // Detect an http(s) URL in the description and render it as a clickable
-        // LinkLabel region. Otherwise fall back to a plain gray Label.
+        // LinkLabel region. Otherwise fall back to a plain gray Label. Use the
+        // caller-supplied base font and GDI+ compatibility-off text rendering
+        // to keep the text baseline aligned with an adjacent bold Label.
         var match = System.Text.RegularExpressions.Regex.Match(description, @"https?://[^\s)]+");
         if (!match.Success)
         {
@@ -302,6 +308,10 @@ internal sealed class OptionRow : UserControl
                 AutoSize = true,
                 MaximumSize = new Size(DescriptionMaxWidth, 0),
                 ForeColor = SystemColors.GrayText,
+                Font = baseFont,
+                UseCompatibleTextRendering = false,
+                Padding = Padding.Empty,
+                Margin = Padding.Empty,
             };
         }
 
@@ -314,6 +324,9 @@ internal sealed class OptionRow : UserControl
             ActiveLinkColor = SystemColors.HotTrack,
             LinkBehavior = LinkBehavior.HoverUnderline,
             Padding = Padding.Empty,
+            Margin = Padding.Empty,
+            Font = baseFont,
+            UseCompatibleTextRendering = false,
         };
         link.LinkArea = new LinkArea(match.Index, match.Length);
         string url = match.Value;
