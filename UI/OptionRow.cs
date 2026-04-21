@@ -154,56 +154,34 @@ internal sealed class OptionRow : UserControl
     {
         var row = new OptionRow();
 
-        // Row 1 — inline header: title (bold) followed by the description on
-        // the same line, with any http(s) URL rendered as a clickable region.
-        var header = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2,
-            Margin = new Padding(0, 0, 0, 4),
-            Padding = Padding.Empty,
-        };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
         var baseFont = SystemFonts.MessageBoxFont!;
+
+        // Row 1 — title only.
         var titleLbl = new Label
         {
             Text = title,
             AutoSize = true,
             Font = baseFont,
-            Margin = Padding.Empty,
+            Margin = new Padding(0, 0, 0, 4),
             Padding = Padding.Empty,
-            Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
             UseCompatibleTextRendering = false,
         };
-        header.Controls.Add(titleLbl, 0, 0);
-
-        if (!string.IsNullOrEmpty(description))
-        {
-            var desc = BuildDescriptionControl(": " + description, baseFont);
-            desc.Margin = Padding.Empty;
-            desc.Padding = Padding.Empty;
-            desc.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
-            header.Controls.Add(desc, 1, 0);
-        }
-
-        row._layout.Controls.Add(header);
+        row._layout.Controls.Add(titleLbl);
         row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        // Row 2 — input: TextBox + Browse.
+        // Row 2 — input: TextBox + Browse + status icon + status label.
         var inputRow = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2,
+            ColumnCount = 4,
             Margin = Padding.Empty,
             Padding = Padding.Empty,
         };
         inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         inputRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         var textBox = new TextBox
@@ -220,7 +198,7 @@ internal sealed class OptionRow : UserControl
             Text = "Browse…",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Margin = Padding.Empty,
+            Margin = new Padding(0, 0, 8, 0),
             Padding = new Padding(6, 0, 6, 0),
         };
         browseBtn.Click += (_, _) =>
@@ -244,47 +222,43 @@ internal sealed class OptionRow : UserControl
                 textBox.Text = dialog.FileName;
         };
 
-        inputRow.Controls.Add(textBox, 0, 0);
-        inputRow.Controls.Add(browseBtn, 1, 0);
-
-        row._layout.Controls.Add(inputRow);
-        row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        // Row 3 — status: icon + long status label with version and date.
-        var statusRow = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2,
-            Margin = new Padding(0, 4, 0, 0),
-            Padding = Padding.Empty,
-        };
-        statusRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        statusRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
         var statusPic = new PictureBox
         {
             Size = new Size(16, 16),
             SizeMode = PictureBoxSizeMode.CenterImage,
-            Margin = new Padding(0, 1, 6, 0),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top,
+            Margin = new Padding(0, 4, 4, 0),
+            Anchor = AnchorStyles.Left,
         };
         row.StatusPicture = statusPic;
 
         var statusLbl = new Label
         {
             AutoSize = true,
-            Margin = Padding.Empty,
-            Anchor = AnchorStyles.Left | AnchorStyles.Top,
+            Font = baseFont,
+            Margin = new Padding(0, 5, 0, 0),
+            Padding = Padding.Empty,
+            Anchor = AnchorStyles.Left,
+            UseCompatibleTextRendering = false,
         };
         row.StatusLabel = statusLbl;
 
-        statusRow.Controls.Add(statusPic, 0, 0);
-        statusRow.Controls.Add(statusLbl, 1, 0);
+        inputRow.Controls.Add(textBox, 0, 0);
+        inputRow.Controls.Add(browseBtn, 1, 0);
+        inputRow.Controls.Add(statusPic, 2, 0);
+        inputRow.Controls.Add(statusLbl, 3, 0);
 
-        row._layout.Controls.Add(statusRow);
+        row._layout.Controls.Add(inputRow);
         row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        // Row 3 — description (optionally with a clickable URL).
+        if (!string.IsNullOrEmpty(description))
+        {
+            var desc = BuildDescriptionControl(description, baseFont);
+            desc.Margin = new Padding(0, 4, 0, 0);
+            desc.Padding = Padding.Empty;
+            row._layout.Controls.Add(desc);
+            row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
 
         return row;
     }
