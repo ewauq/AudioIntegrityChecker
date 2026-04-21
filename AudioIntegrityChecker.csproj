@@ -11,9 +11,9 @@
     <TieredPGO>true</TieredPGO>
     <AssemblyName>AudioIntegrityChecker</AssemblyName>
     <RootNamespace>AudioIntegrityChecker</RootNamespace>
-    <Version>1.6.4</Version>
-    <AssemblyVersion>1.6.4.0</AssemblyVersion>
-    <FileVersion>1.6.4.0</FileVersion>
+    <Version>1.6.5</Version>
+    <AssemblyVersion>1.6.5.0</AssemblyVersion>
+    <FileVersion>1.6.5.0</FileVersion>
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <NoWarn>NU1701</NoWarn>
   </PropertyGroup>
