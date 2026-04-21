@@ -1042,7 +1042,7 @@ public sealed class MainForm : Form
         string text =
             $"Audio Integrity Checker v{v.Major}.{v.Minor}.{v.Build}\n"
             + "\n"
-            + "A read-only scanner that detects corruption, structural anomalies\n"
+            + "A read-only scanner that detects corruption, structural anomalies "
             + "and metadata inconsistencies in audio files (FLAC, MP3).\n"
             + "\n"
             + "https://github.com/ewauq/AudioIntegrityChecker";
