@@ -12,7 +12,6 @@ internal sealed class OptionRow : UserControl
     public CheckBox? CheckBoxControl { get; private set; }
     public TrackBar? SliderControl { get; private set; }
     public Label? ValueLabel { get; private set; }
-    public Label? DescriptionLabel { get; private set; }
     public TextBox? TextBoxControl { get; private set; }
     public PictureBox? StatusPicture { get; private set; }
     public Label? StatusLabel { get; private set; }
@@ -62,7 +61,6 @@ internal sealed class OptionRow : UserControl
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(20, 2, 0, 0),
             };
-            row.DescriptionLabel = desc;
             row._layout.Controls.Add(desc);
             row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         }
@@ -140,7 +138,6 @@ internal sealed class OptionRow : UserControl
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(0, 2, 0, 0),
             };
-            row.DescriptionLabel = desc;
             row._layout.Controls.Add(desc);
             row._layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         }
@@ -176,7 +173,7 @@ internal sealed class OptionRow : UserControl
         {
             Text = title,
             AutoSize = true,
-            Font = new Font(baseFont, FontStyle.Bold),
+            Font = baseFont,
             Margin = Padding.Empty,
             Padding = Padding.Empty,
             Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
@@ -186,8 +183,7 @@ internal sealed class OptionRow : UserControl
 
         if (!string.IsNullOrEmpty(description))
         {
-            var desc = BuildDescriptionControl(" — " + description, baseFont);
-            row.DescriptionLabel = desc as Label;
+            var desc = BuildDescriptionControl(": " + description, baseFont);
             desc.Margin = Padding.Empty;
             desc.Padding = Padding.Empty;
             desc.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
