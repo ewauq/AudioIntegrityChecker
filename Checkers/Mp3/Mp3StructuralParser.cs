@@ -14,9 +14,6 @@ internal static class Mp3StructuralParser
     private const int FrameCrcSize = 2; // bytes 4–5 when protection_bit == 0
     private const int Id3v1TagSize = 128; // ID3v1 tag is always exactly 128 bytes
 
-    // Offset within the Xing/Info frame where the LAME extension block begins (fixed for all MPEG versions)
-    private const int LameTagRelativeOffset = 120;
-
     // Shared MPEG format constants (sync bytes, frame header size, bitrate/sample-rate tables,
     // samples-per-frame, ID3v2 layout, Xing/Info offsets) live in Mp3Format.
 
@@ -256,35 +253,13 @@ internal static class Mp3StructuralParser
             }
         }
 
-        // LAME tag: "LAME" signature at xingOffset + LameTagRelativeOffset (120 bytes).
-        // The Xing/Info frame is structured so the LAME extension always starts at this fixed
-        // offset after the Xing/Info signature, regardless of VBR/CBR or MPEG version.
-        int lameTagPos = xingOffset + LameTagRelativeOffset;
-        if (lameTagPos + 4 > buf.Length)
-            return;
-
-        bool isLame =
-            buf[lameTagPos] == (byte)'L'
-            && buf[lameTagPos + 1] == (byte)'A'
-            && buf[lameTagPos + 2] == (byte)'M'
-            && buf[lameTagPos + 3] == (byte)'E';
-
-        if (!isLame)
-            return;
-
-        // LAME CRC covers the first 190 bytes of the info frame (bytes 0–189),
-        // and is stored big-endian at bytes 190–191 of that same frame.
-        const int LameCrcCoverage = 190; // bytes covered by the CRC
-        const int LameCrcOffset = 190; // byte position of the stored CRC high byte
-        if (firstFramePos + LameCrcOffset + 2 > buf.Length)
-            return;
-
-        int lameCrcStored =
-            (buf[firstFramePos + LameCrcOffset] << 8) | buf[firstFramePos + LameCrcOffset + 1];
-        ushort lameCrcComputed = CrcLameTag(buf, firstFramePos, LameCrcCoverage);
-
-        if (lameCrcStored != lameCrcComputed)
-            diagnostics.Add((Mp3Diagnostic.LAME_TAG_CRC_MISMATCH, 0));
+        // Note: the LAME extension tag CRC (at Xing offset 120+34) is intentionally
+        // not verified. It only protects encoder metadata (version string, ReplayGain,
+        // encoder delay, gain), never audio. Reference verifiers like mp3val and
+        // foobar2000's File Integrity Verifier do not check it either, and our own
+        // implementation produces systematic false positives across different LAME
+        // releases (3.90, 3.99r observed). The Xing/Info frame count check above
+        // remains as the useful header-level integrity signal.
     }
 
     // -------------------------------------------------------------------------
@@ -353,37 +328,13 @@ internal static class Mp3StructuralParser
         | buf[offset + 3];
 
     // -------------------------------------------------------------------------
-    // CRC-16/ARC: poly=0x8005, init=0xFFFF, input reflected, output reflected.
-    // Used for MP3 frame header protection (ISO 11172-3).
+    // CRC-16/MPEG: poly=0x8005, init=0xFFFF, MSB-first, no reflection, no final XOR.
+    // ISO/IEC 11172-3 §2.4.3.1 — MP3 frame header protection.
     // Pass init=0xFFFF to start a new CRC, or a prior return value to continue.
     // -------------------------------------------------------------------------
 
     private static ushort Crc16(ushort crc, ReadOnlySpan<byte> buf, int offset, int length)
     {
-        for (int i = 0; i < length; i++)
-        {
-            byte b = buf[offset + i];
-            for (int bit = 0; bit < 8; bit++)
-            {
-                bool databit = (b & 1) != 0;
-                bool crcBit = (crc & 1) != 0;
-                crc >>= 1;
-                if (databit ^ crcBit)
-                    crc ^= 0xA001; // reflected 0x8005
-                b >>= 1;
-            }
-        }
-        return crc;
-    }
-
-    // -------------------------------------------------------------------------
-    // CRC-16 used by the LAME tag: poly=0x8005, init=0x0000, NOT reflected (MSB-first).
-    // Matches the CRC_update() function in libmp3lame/VbrTag.c.
-    // -------------------------------------------------------------------------
-
-    private static ushort CrcLameTag(ReadOnlySpan<byte> buf, int offset, int length)
-    {
-        ushort crc = 0x0000;
         for (int i = 0; i < length; i++)
         {
             crc ^= (ushort)(buf[offset + i] << 8);

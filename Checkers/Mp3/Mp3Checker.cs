@@ -12,7 +12,6 @@ internal enum Mp3Diagnostic
     FRAME_CRC_MISMATCH,
     XING_FRAME_COUNT_MISMATCH, // VBR: Xing header reports an incorrect frame count
     INFO_FRAME_COUNT_MISMATCH, // CBR: Info header reports an incorrect frame count
-    LAME_TAG_CRC_MISMATCH,
     TRUNCATED_STREAM,
     LOST_SYNC,
 
@@ -34,7 +33,6 @@ internal static class Mp3DiagnosticInfo
     internal static CheckCategory GetCategory(Mp3Diagnostic d) =>
         d switch
         {
-            Mp3Diagnostic.LAME_TAG_CRC_MISMATCH => CheckCategory.Metadata,
             Mp3Diagnostic.XING_FRAME_COUNT_MISMATCH => CheckCategory.Index,
             Mp3Diagnostic.INFO_FRAME_COUNT_MISMATCH => CheckCategory.Index,
             Mp3Diagnostic.JUNK_DATA => CheckCategory.Structure,

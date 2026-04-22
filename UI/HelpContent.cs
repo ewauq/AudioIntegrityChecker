@@ -357,30 +357,6 @@ internal static class HelpContent
             </ul>
             """
         ),
-        ["LAME_TAG_CRC_MISMATCH"] = new(
-            Title: "LAME Tag CRC Mismatch",
-            Technical: "The LAME encoder embeds a metadata block inside the first audio frame, "
-                + "after the Xing/Info header. This block stores encoder settings, "
-                + "replay gain values, and gapless playback offsets. "
-                + "A CRC protects this metadata area. "
-                + "The stored CRC does not match the recomputed value.",
-            Simple: "The encoder metadata is corrupted. The audio is not affected, "
-                + "but features that rely on the LAME tag (gapless playback, replay gain) "
-                + "may not work correctly.",
-            Causes: """
-            <ul>
-                <li>A tag editor or audio tool overwrote part of the first frame where the LAME tag lives</li>
-                <li>Corruption at the beginning of the file</li>
-                <li>A conversion tool re-wrote the Xing/Info header without preserving the LAME tag CRC</li>
-            </ul>
-            """,
-            Fix: """
-            <ul>
-                <li>Usually harmless for regular playback</li>
-                <li>Re-encode from the original source if you need accurate replay gain or gapless playback</li>
-            </ul>
-            """
-        ),
     };
 
     private static string WrapHtml(string body) =>

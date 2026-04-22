@@ -67,7 +67,6 @@ The **Message** column gives a plain-language description of the issue along wit
 * `JUNK_DATA`: 1–3 unexpected bytes found between two valid frames
 * `LOST_SYNC`: Sync word missing at the expected position after a frame
 * `XING_FRAME_COUNT_MISMATCH` and `INFO_FRAME_COUNT_MISMATCH`: The Xing VBR or Info CBR header declares a frame count that does not match the actual frame count
-* `LAME_TAG_CRC_MISMATCH`: The LAME tag CRC does not match the first frame content
 * `TRUNCATED_STREAM`: End of file reached in the middle of a frame
 * `FRAME_CRC_MISMATCH`: A frame's CRC does not match its side information
 * `DECODE_ERROR`: mpg123 reported a decode error (bit reservoir underrun, Huffman decoding failure, etc.), the audio is corrupted.
