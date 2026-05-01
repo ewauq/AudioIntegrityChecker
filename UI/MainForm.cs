@@ -957,13 +957,8 @@ public sealed class MainForm : Form
             return;
         _cancelButton.Enabled = false;
         _menuScanCancel.Enabled = false;
-        int inFlight =
-            _startedFiles - Volatile.Read(ref _completedFiles);
-        SetStatus(
-            inFlight > 0
-                ? $"Cancelling… ({inFlight} in flight)"
-                : "Cancelling…"
-        );
+        int inFlight = _startedFiles - Volatile.Read(ref _completedFiles);
+        SetStatus(inFlight > 0 ? $"Cancelling… ({inFlight} in flight)" : "Cancelling…");
         // Unblock the pause gate so the cancellation token propagates
         // through the pipeline loop instead of hanging.
         _pauseController?.Reset();

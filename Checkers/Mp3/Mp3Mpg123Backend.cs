@@ -102,9 +102,7 @@ internal static class Mp3Mpg123Backend
                         // mpg123_tellframe returns -1 on error; clamp to 0 so
                         // the diagnostic always reports a non-negative index.
                         long framePos = Mp3NativeMethods.mpg123_tellframe(mh);
-                        diagnostics.Add(
-                            (Mp3Diagnostic.DECODE_ERROR, framePos < 0 ? 0 : framePos)
-                        );
+                        diagnostics.Add((Mp3Diagnostic.DECODE_ERROR, framePos < 0 ? 0 : framePos));
                         break;
                     }
                     // MPG123_NEED_MORE: all data already fed, treat as end of stream
