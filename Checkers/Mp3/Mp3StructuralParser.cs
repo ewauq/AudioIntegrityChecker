@@ -182,15 +182,19 @@ internal static class Mp3StructuralParser
             // ----------------------------------------------------------------
             if (pos + frameSize > buf.Length)
             {
-                // Allow for trailing ID3v1 tag. If remaining bytes look like "TAG", not truncated
+                // The next frame would extend past the buffer. If the bytes
+                // from `pos` to EOF are exactly an ID3v1 tag (signature "TAG"
+                // at pos, length 128), the audio stream ended cleanly and we
+                // are just sitting on the trailing tag. Any other shape is
+                // real truncation.
                 int remaining = buf.Length - pos;
-                bool hasId3v1Tail =
-                    buf.Length >= Id3v1TagSize
-                    && buf[buf.Length - Id3v1TagSize] == (byte)'T'
-                    && buf[buf.Length - Id3v1TagSize + 1] == (byte)'A'
-                    && buf[buf.Length - Id3v1TagSize + 2] == (byte)'G';
+                bool atId3v1Tag =
+                    remaining == Id3v1TagSize
+                    && buf[pos] == (byte)'T'
+                    && buf[pos + 1] == (byte)'A'
+                    && buf[pos + 2] == (byte)'G';
 
-                if (!hasId3v1Tail || remaining < Id3v1TagSize)
+                if (!atId3v1Tag)
                     diagnostics.Add((Mp3Diagnostic.TRUNCATED_STREAM, frameCount));
 
                 break;
