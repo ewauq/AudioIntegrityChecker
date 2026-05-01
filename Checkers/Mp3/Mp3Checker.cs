@@ -85,9 +85,11 @@ internal sealed class Mp3Checker : IFormatChecker
         if (pass1.Any(d => Mp3DiagnosticInfo.IsError(d.Diagnostic)))
             return new CheckOutcome(BuildResult(pass1), duration);
 
-        // Pass 2: full audio decode via mpg123 (skipped if DLL unavailable)
+        // Pass 2: full audio decode via mpg123 (skipped if DLL unavailable).
+        // TryInitialize goes through the DllImportResolver, so it picks up the
+        // user-configured Libraries path when one is set.
         List<(Mp3Diagnostic Diagnostic, long FrameIndex)> pass2 = [];
-        if (Mp3Mpg123Backend.IsLibraryAvailable() && Mp3Mpg123Backend.TryInitialize())
+        if (Mp3Mpg123Backend.TryInitialize())
         {
             var decodeResult = Mp3Mpg123Backend.Decode(buffer.Pointer, buffer.Length);
             if (decodeResult is null)

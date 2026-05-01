@@ -10,51 +10,42 @@ internal static class Mp3Mpg123Backend
     // 1152 samples/frame × 2 channels × 4 bytes/sample (float32) = 9216 bytes
     private const int MaxDecodedFrameBytes = 9216;
 
-    private static bool? _libraryAvailable;
     private static bool _initialized;
+    private static bool _initFailed;
     private static readonly object _initLock = new();
 
-    internal static bool IsLibraryAvailable()
-    {
-        if (_libraryAvailable.HasValue)
-            return _libraryAvailable.Value;
-
-        if (NativeLibrary.TryLoad("mpg123.dll", out var handle))
-        {
-            NativeLibrary.Free(handle);
-            _libraryAvailable = true;
-        }
-        else
-        {
-            _libraryAvailable = false;
-        }
-
-        return _libraryAvailable.Value;
-    }
-
     /// <summary>
-    /// Calls mpg123_init() exactly once across all threads.
-    /// Safe to call from parallel workers. Subsequent calls return the cached result.
+    /// Calls mpg123_init() exactly once across all threads. The P/Invoke goes
+    /// through the DllImportResolver, so it honours user-configured paths
+    /// (Options &gt; Libraries) instead of probing the system PATH directly.
+    /// Subsequent calls return the cached result; once an init has failed,
+    /// later attempts short-circuit to <see langword="false"/>.
     /// </summary>
     internal static bool TryInitialize()
     {
         if (_initialized)
             return true;
+        if (_initFailed)
+            return false;
 
         lock (_initLock)
         {
             if (_initialized)
                 return true;
+            if (_initFailed)
+                return false;
 
             try
             {
                 int rc = Mp3NativeMethods.mpg123_init();
                 _initialized = rc == Mp3NativeMethods.MPG123_OK;
+                if (!_initialized)
+                    _initFailed = true;
                 return _initialized;
             }
             catch (DllNotFoundException)
             {
-                _libraryAvailable = false;
+                _initFailed = true;
                 return false;
             }
         }
@@ -130,7 +121,18 @@ internal static class Mp3Mpg123Backend
 
     internal static void Shutdown()
     {
-        if (_initialized)
-            Mp3NativeMethods.mpg123_exit();
+        lock (_initLock)
+        {
+            if (!_initialized)
+                return;
+            try
+            {
+                Mp3NativeMethods.mpg123_exit();
+            }
+            finally
+            {
+                _initialized = false;
+            }
+        }
     }
 }
