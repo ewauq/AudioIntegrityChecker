@@ -31,6 +31,7 @@ internal static class Mp3StructuralParser
         int pos = SkipId3v2(buf);
         long frameCount = 0;
         int firstFramePos = -1;
+        int firstFrameSize = 0;
         int firstVersion = Mp3Format.Mpeg1Version; // default MPEG1
         int firstChannelMode = 0; // default stereo
         int firstSrIdx = -1;
@@ -172,6 +173,7 @@ internal static class Mp3StructuralParser
             if (frameCount == 0)
             {
                 firstFramePos = pos;
+                firstFrameSize = frameSize;
                 firstVersion = version;
                 firstChannelMode = channelMode;
                 firstSrIdx = srIdx;
@@ -211,6 +213,7 @@ internal static class Mp3StructuralParser
             CheckXingLame(
                 buf,
                 firstFramePos,
+                firstFrameSize,
                 firstVersion,
                 firstChannelMode,
                 frameCount,
@@ -227,6 +230,7 @@ internal static class Mp3StructuralParser
     private static void CheckXingLame(
         ReadOnlySpan<byte> buf,
         int firstFramePos,
+        int firstFrameSize,
         int version,
         int channelMode,
         long actualFrameCount,
@@ -237,6 +241,13 @@ internal static class Mp3StructuralParser
 
         // Need at least the 4-byte signature + 4-byte flags field
         if (xingOffset + 8 > buf.Length)
+            return;
+
+        // Reject candidates whose Xing/Info signature would land past the
+        // end of the first frame: at very low bitrates (MPEG-2.5 8 kbps,
+        // 8 kHz) the standard Xing offset can exceed the frame and we'd
+        // pick up a signature from the second frame's payload.
+        if (xingOffset + 8 > firstFramePos + firstFrameSize)
             return;
 
         // Detect "Xing" (VBR) or "Info" (CBR) signature
