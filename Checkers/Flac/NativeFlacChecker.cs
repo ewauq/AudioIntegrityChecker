@@ -399,26 +399,36 @@ internal sealed class NativeFlacChecker : IFormatChecker
         if (state.DecodedSamples == 0)
             return false; // nothing decoded, this is not an end-of-stream event
 
-        // STREAMINFO missing or total_samples == 0 (valid per spec for streamed FLAC).
-        // Fall back to a byte-level check: if the error position is close to EOF and
-        // the trailing bytes carry an ID3v1 / ID3v2 signature, it's trailing garbage.
-        int tailStart = Math.Max(0, state.ErrorAtBytePosition - 16);
-        int tailLength = state.DataLength - tailStart;
-        if (tailLength <= 0 || tailLength > 8192)
-            return false;
-
-        return ContainsId3Signature(state.DataPtr, tailStart, tailLength);
+        // STREAMINFO missing or total_samples == 0 (valid per spec for
+        // streamed FLAC). Fall back to a byte-level check, but only at
+        // structurally valid ID3 positions: ID3v1 sits exactly at
+        // length-128 with signature "TAG", and an ID3v2 footer/header is
+        // expected within a handful of bytes of the LOST_SYNC point.
+        return HasStructuralId3Signature(state);
     }
 
-    private static unsafe bool ContainsId3Signature(IntPtr dataPtr, int offset, int length)
+    private static unsafe bool HasStructuralId3Signature(DecodeState state)
     {
-        byte* p = (byte*)dataPtr + offset;
-        for (int i = 0; i <= length - 3; i++)
+        byte* p = (byte*)state.DataPtr;
+        int len = state.DataLength;
+
+        // ID3v1: "TAG" at exactly length-128 (the only valid position).
+        const int Id3v1Size = 128;
+        if (len >= Id3v1Size)
         {
-            // ID3v1 (TAG) at EOF-128 or ID3v2 (ID3) prefix
-            if (p[i] == 0x54 && p[i + 1] == 0x41 && p[i + 2] == 0x47)
+            byte* tag = p + (len - Id3v1Size);
+            if (tag[0] == (byte)'T' && tag[1] == (byte)'A' && tag[2] == (byte)'G')
                 return true;
-            if (p[i] == 0x49 && p[i + 1] == 0x44 && p[i + 2] == 0x33)
+        }
+
+        // ID3v2: "ID3" within 16 bytes after the LOST_SYNC point. A genuine
+        // trailing tag prepended by some tagger lands right where libFLAC
+        // gave up, not anywhere in an 8 KB window.
+        int probeStart = state.ErrorAtBytePosition;
+        int probeEnd = Math.Min(len - 3, probeStart + 16);
+        for (int i = probeStart; i <= probeEnd; i++)
+        {
+            if (p[i] == (byte)'I' && p[i + 1] == (byte)'D' && p[i + 2] == (byte)'3')
                 return true;
         }
         return false;
