@@ -309,6 +309,7 @@ public sealed class MainForm : Form
             Minimum = 0,
             Maximum = 100,
             Value = 0,
+            AccessibleName = "Scan progress",
         };
         _globalBarWrapper.Controls.Add(_globalBar);
 
@@ -395,22 +396,37 @@ public sealed class MainForm : Form
         // ---- Column header context menu ----
         BuildColumnHeaderContextMenu();
 
-        _labelFiles = new ToolStripStatusLabel();
+        _labelFiles = new ToolStripStatusLabel { AccessibleName = "Queued file count" };
         _sepSize = new ToolStripSeparator { Visible = false };
-        _labelSize = new ToolStripStatusLabel { Visible = false };
+        _labelSize = new ToolStripStatusLabel
+        {
+            Visible = false,
+            AccessibleName = "Total queue size",
+        };
         _sepStorage = new ToolStripSeparator { Visible = false };
-        _labelStorage = new ToolStripStatusLabel { Visible = false };
+        _labelStorage = new ToolStripStatusLabel
+        {
+            Visible = false,
+            AccessibleName = "Storage device",
+        };
         _sepStatus = new ToolStripSeparator { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
         _labelRam = new ToolStripStatusLabel(
             $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
-        );
+        )
+        {
+            AccessibleName = "RAM usage",
+        };
         var sepRam = new ToolStripSeparator();
-        _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
+        _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}")
+        {
+            AccessibleName = "Worker thread count",
+        };
         _statusLabel = new ToolStripStatusLabel
         {
             Spring = true,
             TextAlign = ContentAlignment.MiddleLeft,
+            AccessibleName = "Scan status",
         };
 
         _statusStrip = new StatusStrip();
