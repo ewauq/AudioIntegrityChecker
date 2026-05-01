@@ -941,7 +941,13 @@ public sealed class MainForm : Form
             return;
         _cancelButton.Enabled = false;
         _menuScanCancel.Enabled = false;
-        SetStatus("Cancelling…");
+        int inFlight =
+            _startedFiles - Volatile.Read(ref _completedFiles);
+        SetStatus(
+            inFlight > 0
+                ? $"Cancelling… ({inFlight} in flight)"
+                : "Cancelling…"
+        );
         // Unblock the pause gate so the cancellation token propagates
         // through the pipeline loop instead of hanging.
         _pauseController?.Reset();
@@ -1137,6 +1143,11 @@ public sealed class MainForm : Form
         if (keyData == Keys.Escape && _analysisState != AnalysisState.Idle)
         {
             OnCancelClick(this, EventArgs.Empty);
+            return true;
+        }
+        if (keyData == Keys.F1)
+        {
+            OnMenuToggleHelpPanel(this, EventArgs.Empty);
             return true;
         }
         return base.ProcessCmdKey(ref msg, keyData);
