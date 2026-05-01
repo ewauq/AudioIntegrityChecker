@@ -52,17 +52,23 @@ The help panel inside the app gives you a longer explanation and a suggested fix
 
 - Windows 10 or later (64-bit)
 - [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
-- `libFLAC.dll` and `mpg123.dll`, both shipped in the release zip. Drop them next to the exe.
+- `libFLAC.dll` and `mpg123.dll`, both shipped with [any release](https://github.com/ewauq/AudioIntegrityChecker/releases). Drop them next to the exe, or make sure they are available in your PATH.
 
 You can also point the app at your own copies via **Options > Libraries**.
 
 ## Troubleshooting
 
-**Drag and drop does not work.** This happens when the app runs as administrator and Windows Explorer does not (or the other way around). Windows blocks drag and drop between different privilege levels. Launch the exe by double-clicking it from Explorer instead of from an elevated terminal.
+#### Drag and drop does not work
 
-**MP3 files only get a partial check.** The status bar shows `mpg123: not found`. The full audio decode pass needs `mpg123.dll` next to the exe. The version shipped in the release zip is the right one (64-bit). If you replaced it with your own, make sure it is the 64-bit build.
+This happens when the app runs as administrator and Windows Explorer does not (or the other way around). Windows blocks drag and drop between different privilege levels. Launch the exe by double-clicking it from Explorer instead of from an elevated terminal.
 
-**FLAC files fail with a missing library error.** Same fix: `libFLAC.dll` must be next to the exe, 64-bit.
+#### MP3 files only get a partial check
+
+The full audio decode pass needs `mpg123.dll`. Check if AIC has found the lib in File > Options > Libraries. The version shipped with the [releases](https://github.com/ewauq/AudioIntegrityChecker/releases) is the right one (64-bit). If you replaced it with your own, make sure it is the 64-bit build.
+
+**FLAC files fail with a missing library error.** 
+
+Same fix: `libFLAC.dll` must be next to the exe or in PATH, 64-bit.
 
 ---
 
