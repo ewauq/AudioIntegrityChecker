@@ -1118,33 +1118,8 @@ public sealed class MainForm : Form
 
     private void OnMenuKeyboardShortcuts(object? sender, EventArgs e)
     {
-        const string text =
-            "File\n"
-            + "    Ctrl+O              Add files\n"
-            + "    Ctrl+Shift+O   Add folder\n"
-            + "    Ctrl+L              Clear list\n"
-            + "    Ctrl+,              Options\n"
-            + "\n"
-            + "Scan\n"
-            + "    F5                    Start / Pause / Resume\n"
-            + "    Esc                  Cancel\n"
-            + "\n"
-            + "View\n"
-            + "    F9                    Toggle help panel\n"
-            + "\n"
-            + "Help\n"
-            + "    Shift+F1          Keyboard shortcuts\n"
-            + "\n"
-            + "List\n"
-            + "    Ctrl+C             Copy selected rows as JSON\n"
-            + "    Enter / dbl   Reveal in Explorer";
-        MessageBox.Show(
-            this,
-            text,
-            "Keyboard shortcuts",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information
-        );
+        using var dlg = new KeyboardShortcutsForm(_menuStrip);
+        dlg.ShowDialog(this);
     }
 
     private void OnMenuAbout(object? sender, EventArgs e)
