@@ -151,14 +151,28 @@ internal static class NativeLibraryLoader
         DllImportSearchPath? searchPath
     )
     {
-        // DllImport attributes use "libFLAC.dll" and "mpg123.dll" as names.
-        // Match by loose contains to tolerate minor naming variants (lib prefix, .dll suffix).
-        string n = libraryName.ToLowerInvariant();
-        if (n.Contains("flac") && _libFlacHandle != IntPtr.Zero)
+        // Match the exact DllImport names used in this assembly. Tolerate the
+        // ".dll" suffix being absent (the runtime sometimes strips it on
+        // Linux-style probing). Anything else falls through to Windows'
+        // default search so an unrelated DllImport that happens to contain
+        // "flac" or "mpg123" cannot accidentally route through our handles.
+        if (
+            _libFlacHandle != IntPtr.Zero
+            && (
+                libraryName.Equals(LibFlacName, StringComparison.OrdinalIgnoreCase)
+                || libraryName.Equals("libFLAC", StringComparison.OrdinalIgnoreCase)
+            )
+        )
             return _libFlacHandle;
-        if (n.Contains("mpg123") && _mpg123Handle != IntPtr.Zero)
+        if (
+            _mpg123Handle != IntPtr.Zero
+            && (
+                libraryName.Equals(Mpg123Name, StringComparison.OrdinalIgnoreCase)
+                || libraryName.Equals("mpg123", StringComparison.OrdinalIgnoreCase)
+            )
+        )
             return _mpg123Handle;
-        return IntPtr.Zero; // fall through to default Windows search
+        return IntPtr.Zero;
     }
 
     private static bool IsAvailable(
