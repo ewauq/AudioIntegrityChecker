@@ -1604,17 +1604,22 @@ public sealed class MainForm : Form
 
     private string BuildProgressBarText()
     {
-        int pct = _totalFiles > 0 ? (int)((double)_completedFiles / _totalFiles * 100) : 0;
+        // Read the worker-incremented counters with a memory barrier so the
+        // 500 ms UI timer doesn't render percentage and "X/Y files" pulled
+        // from different points in time.
+        int completed = Volatile.Read(ref _completedFiles);
+        int pct = _totalFiles > 0 ? (int)((double)completed / _totalFiles * 100) : 0;
         string elapsed = _analysisStopwatch.Elapsed.ToString(@"hh\:mm\:ss");
         if (_analysisState is AnalysisState.Pausing or AnalysisState.Paused)
-            return $"Paused - {pct}% - {_completedFiles}/{_totalFiles} files - Elapsed time: {elapsed}";
-        return $"Progression: {pct}% - {_completedFiles}/{_totalFiles} files"
+            return $"Paused - {pct}% - {completed}/{_totalFiles} files - Elapsed time: {elapsed}";
+        return $"Progression: {pct}% - {completed}/{_totalFiles} files"
             + $" - Elapsed time: {elapsed} - Remaining time: {BuildEtaString(_analysisStopwatch.Elapsed)}";
     }
 
     private string BuildEtaString(TimeSpan elapsed)
     {
-        if (elapsed.TotalSeconds < 3.0 || _completedFiles < 5)
+        int completed = Volatile.Read(ref _completedFiles);
+        if (elapsed.TotalSeconds < 3.0 || completed < 5)
             return "--:--:--";
 
         // Priority 1: bytes rate — more accurate than file count for variable sizes.
@@ -1626,10 +1631,10 @@ public sealed class MainForm : Form
         }
 
         // Priority 2: file count (fallback).
-        if (_completedFiles > 0)
+        if (completed > 0)
         {
-            double rate = _completedFiles / elapsed.TotalSeconds;
-            double remaining = (_totalFiles - _completedFiles) / rate;
+            double rate = completed / elapsed.TotalSeconds;
+            double remaining = (_totalFiles - completed) / rate;
             if (remaining > 0)
                 return TimeSpan.FromSeconds(remaining).ToString(@"hh\:mm\:ss");
         }
