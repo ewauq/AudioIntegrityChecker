@@ -33,6 +33,7 @@ internal static class Mp3StructuralParser
         int firstFramePos = -1;
         int firstVersion = Mp3Format.Mpeg1Version; // default MPEG1
         int firstChannelMode = 0; // default stereo
+        int firstSrIdx = -1;
 
         while (pos <= buf.Length - Mp3Format.FrameHeaderSize)
         {
@@ -51,16 +52,27 @@ internal static class Mp3StructuralParser
                     continue;
                 }
 
-                // Between frames: scan for next sync
-                int syncPos = FindNextSync(buf, pos);
+                // Between frames: scan for next sync. Require a header that
+                // (a) matches the static MP3 header validation, (b) shares
+                // the previous frame's MPEG version + sample rate (only the
+                // bitrate may vary across frames in VBR), and (c) is followed
+                // by another sync at pos + frameSize (double-sync).
+                int syncPos = FindNextSync(
+                    buf,
+                    pos,
+                    expectedVersion: firstVersion,
+                    expectedSrIdx: firstSrIdx,
+                    requireDoubleSync: true
+                );
                 if (syncPos < 0)
                     break; // no more frames
 
                 int gap = syncPos - pos;
-                // Gaps of 1–3 bytes are typically alignment padding left by tag editors (JUNK_DATA).
-                // Larger gaps indicate a genuine break in the frame sequence (LOST_SYNC).
+                // Gaps up to 8 bytes are typically alignment padding left by
+                // tag editors (cluster boundaries, ID3 padding). Anything
+                // bigger is a real break in the frame sequence.
                 diagnostics.Add(
-                    (gap <= 3 ? Mp3Diagnostic.JUNK_DATA : Mp3Diagnostic.LOST_SYNC, frameCount)
+                    (gap <= 8 ? Mp3Diagnostic.JUNK_DATA : Mp3Diagnostic.LOST_SYNC, frameCount)
                 );
                 pos = syncPos;
                 continue;
@@ -85,9 +97,17 @@ internal static class Mp3StructuralParser
             // free bitrate (0), forbidden bitrate (15), and reserved sample rate (3).
             if (version == 1 || layer != 1 || bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3)
             {
-                // Not a valid MP3 frame header: emit BAD_HEADER and resync
+                // Not a valid MP3 frame header: emit BAD_HEADER and resync,
+                // honouring the same coherence + double-sync rules as the
+                // mid-stream resync above.
                 diagnostics.Add((Mp3Diagnostic.BAD_HEADER, frameCount));
-                int syncPos = FindNextSync(buf, pos + 1);
+                int syncPos = FindNextSync(
+                    buf,
+                    pos + 1,
+                    expectedVersion: frameCount > 0 ? firstVersion : -1,
+                    expectedSrIdx: frameCount > 0 ? firstSrIdx : -1,
+                    requireDoubleSync: frameCount > 0
+                );
                 if (syncPos < 0)
                     break;
                 pos = syncPos;
@@ -154,6 +174,7 @@ internal static class Mp3StructuralParser
                 firstFramePos = pos;
                 firstVersion = version;
                 firstChannelMode = channelMode;
+                firstSrIdx = srIdx;
             }
 
             // ----------------------------------------------------------------
@@ -294,15 +315,77 @@ internal static class Mp3StructuralParser
     // Helpers
     // -------------------------------------------------------------------------
 
-    private static int FindNextSync(ReadOnlySpan<byte> buf, int from)
+    /// <summary>
+    /// Look for the next valid MP3 frame header. A bare 0xFF E? sync word is
+    /// not enough because audio payload bytes can match it by accident; only
+    /// candidates whose static header (version / layer / bitrate / sample
+    /// rate) is legal are accepted, and when <paramref name="expectedVersion"/>
+    /// or <paramref name="expectedSrIdx"/> are non-negative the candidate
+    /// must match them as well (real MP3 streams keep version + sample rate
+    /// stable; only the bitrate varies across VBR frames).
+    /// When <paramref name="requireDoubleSync"/> is set, the candidate is
+    /// only accepted if the implied next-frame position also starts with a
+    /// sync word, which rules out lone false positives inside genuine junk.
+    /// </summary>
+    private static int FindNextSync(
+        ReadOnlySpan<byte> buf,
+        int from,
+        int expectedVersion = -1,
+        int expectedSrIdx = -1,
+        bool requireDoubleSync = false
+    )
     {
-        for (int i = from; i <= buf.Length - 2; i++)
+        for (int i = from; i <= buf.Length - Mp3Format.FrameHeaderSize; i++)
         {
-            if (
-                buf[i] == Mp3Format.SyncByte
-                && (buf[i + 1] & Mp3Format.SyncMask) == Mp3Format.SyncMask
-            )
-                return i;
+            if (buf[i] != Mp3Format.SyncByte)
+                continue;
+            byte h1 = buf[i + 1];
+            if ((h1 & Mp3Format.SyncMask) != Mp3Format.SyncMask)
+                continue;
+
+            byte h2 = buf[i + 2];
+            int version = (h1 >> 3) & 0x03;
+            int layer = (h1 >> 1) & 0x03;
+            int bitrateIdx = (h2 >> 4) & 0x0F;
+            int srIdx = (h2 >> 2) & 0x03;
+            if (version == 1 || layer != 1 || bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3)
+                continue;
+
+            if (expectedVersion >= 0 && version != expectedVersion)
+                continue;
+            if (expectedSrIdx >= 0 && srIdx != expectedSrIdx)
+                continue;
+
+            if (requireDoubleSync)
+            {
+                int paddingBit = (h2 >> 1) & 0x01;
+                int bitrate =
+                    (
+                        version == Mp3Format.Mpeg1Version
+                            ? Mp3Format.Mpeg1L3Bitrate
+                            : Mp3Format.Mpeg2L3Bitrate
+                    )[bitrateIdx] * 1_000;
+                int sampleRate = Mp3Format.SampleRates[version][srIdx];
+                int coefficient =
+                    version == Mp3Format.Mpeg1Version
+                        ? Mp3Format.FrameSizeCoeffMpeg1
+                        : Mp3Format.FrameSizeCoeffMpeg2;
+                int frameSize = (coefficient * bitrate / sampleRate) + paddingBit;
+                int next = i + frameSize;
+                // Stream end inside this frame is acceptable (truncation
+                // path will catch it). Otherwise demand a sync at the
+                // implied next-frame boundary.
+                if (next + 1 < buf.Length)
+                {
+                    if (
+                        buf[next] != Mp3Format.SyncByte
+                        || (buf[next + 1] & Mp3Format.SyncMask) != Mp3Format.SyncMask
+                    )
+                        continue;
+                }
+            }
+
+            return i;
         }
         return -1;
     }
