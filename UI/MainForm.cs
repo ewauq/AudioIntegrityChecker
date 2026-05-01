@@ -731,17 +731,28 @@ public sealed class MainForm : Form
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
-        switch (_analysisState)
+        try
         {
-            case AnalysisState.Idle:
-                await StartAnalysisAsync();
-                break;
-            case AnalysisState.Analysing:
-                PauseAnalysis();
-                break;
-            case AnalysisState.Paused:
-                ResumeAnalysis();
-                break;
+            switch (_analysisState)
+            {
+                case AnalysisState.Idle:
+                    await StartAnalysisAsync();
+                    break;
+                case AnalysisState.Analysing:
+                    PauseAnalysis();
+                    break;
+                case AnalysisState.Paused:
+                    ResumeAnalysis();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // async void event handler: an unhandled exception escaping here
+            // crashes the process. Surface it in the status bar so the user
+            // gets a chance to see what broke.
+            SetStatus($"Pipeline error: {ex.Message}");
+            SetAnalysisState(AnalysisState.Idle);
         }
     }
 
@@ -1106,12 +1117,19 @@ public sealed class MainForm : Form
 
     private void OnMenuViewGitHub(object? sender, EventArgs e)
     {
-        Process.Start(
-            new ProcessStartInfo("https://github.com/ewauq/AudioIntegrityChecker")
-            {
-                UseShellExecute = true,
-            }
-        );
+        try
+        {
+            Process.Start(
+                new ProcessStartInfo("https://github.com/ewauq/AudioIntegrityChecker")
+                {
+                    UseShellExecute = true,
+                }
+            );
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not open browser: {ex.Message}");
+        }
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -1389,12 +1407,19 @@ public sealed class MainForm : Form
         if (string.IsNullOrEmpty(filePath))
             return;
 
-        Process.Start(
-            new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
-            {
-                UseShellExecute = true,
-            }
-        );
+        try
+        {
+            Process.Start(
+                new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
+                {
+                    UseShellExecute = true,
+                }
+            );
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not reveal file: {ex.Message}");
+        }
     }
 
     private void ShowCompletionDialog(TimeSpan elapsed)
