@@ -14,9 +14,6 @@ internal static class Mp3StructuralParser
     private const int FrameCrcSize = 2; // bytes 4–5 when protection_bit == 0
     private const int Id3v1TagSize = 128; // ID3v1 tag is always exactly 128 bytes
 
-    // Offset within the Xing/Info frame where the LAME extension block begins (fixed for all MPEG versions)
-    private const int LameTagRelativeOffset = 120;
-
     // Shared MPEG format constants (sync bytes, frame header size, bitrate/sample-rate tables,
     // samples-per-frame, ID3v2 layout, Xing/Info offsets) live in Mp3Format.
 
@@ -34,8 +31,10 @@ internal static class Mp3StructuralParser
         int pos = SkipId3v2(buf);
         long frameCount = 0;
         int firstFramePos = -1;
+        int firstFrameSize = 0;
         int firstVersion = Mp3Format.Mpeg1Version; // default MPEG1
         int firstChannelMode = 0; // default stereo
+        int firstSrIdx = -1;
 
         while (pos <= buf.Length - Mp3Format.FrameHeaderSize)
         {
@@ -54,16 +53,27 @@ internal static class Mp3StructuralParser
                     continue;
                 }
 
-                // Between frames: scan for next sync
-                int syncPos = FindNextSync(buf, pos);
+                // Between frames: scan for next sync. Require a header that
+                // (a) matches the static MP3 header validation, (b) shares
+                // the previous frame's MPEG version + sample rate (only the
+                // bitrate may vary across frames in VBR), and (c) is followed
+                // by another sync at pos + frameSize (double-sync).
+                int syncPos = FindNextSync(
+                    buf,
+                    pos,
+                    expectedVersion: firstVersion,
+                    expectedSrIdx: firstSrIdx,
+                    requireDoubleSync: true
+                );
                 if (syncPos < 0)
                     break; // no more frames
 
                 int gap = syncPos - pos;
-                // Gaps of 1–3 bytes are typically alignment padding left by tag editors (JUNK_DATA).
-                // Larger gaps indicate a genuine break in the frame sequence (LOST_SYNC).
+                // Gaps up to 8 bytes are typically alignment padding left by
+                // tag editors (cluster boundaries, ID3 padding). Anything
+                // bigger is a real break in the frame sequence.
                 diagnostics.Add(
-                    (gap <= 3 ? Mp3Diagnostic.JUNK_DATA : Mp3Diagnostic.LOST_SYNC, frameCount)
+                    (gap <= 8 ? Mp3Diagnostic.JUNK_DATA : Mp3Diagnostic.LOST_SYNC, frameCount)
                 );
                 pos = syncPos;
                 continue;
@@ -88,9 +98,17 @@ internal static class Mp3StructuralParser
             // free bitrate (0), forbidden bitrate (15), and reserved sample rate (3).
             if (version == 1 || layer != 1 || bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3)
             {
-                // Not a valid MP3 frame header: emit BAD_HEADER and resync
+                // Not a valid MP3 frame header: emit BAD_HEADER and resync,
+                // honouring the same coherence + double-sync rules as the
+                // mid-stream resync above.
                 diagnostics.Add((Mp3Diagnostic.BAD_HEADER, frameCount));
-                int syncPos = FindNextSync(buf, pos + 1);
+                int syncPos = FindNextSync(
+                    buf,
+                    pos + 1,
+                    expectedVersion: frameCount > 0 ? firstVersion : -1,
+                    expectedSrIdx: frameCount > 0 ? firstSrIdx : -1,
+                    requireDoubleSync: frameCount > 0
+                );
                 if (syncPos < 0)
                     break;
                 pos = syncPos;
@@ -155,8 +173,10 @@ internal static class Mp3StructuralParser
             if (frameCount == 0)
             {
                 firstFramePos = pos;
+                firstFrameSize = frameSize;
                 firstVersion = version;
                 firstChannelMode = channelMode;
+                firstSrIdx = srIdx;
             }
 
             // ----------------------------------------------------------------
@@ -164,15 +184,19 @@ internal static class Mp3StructuralParser
             // ----------------------------------------------------------------
             if (pos + frameSize > buf.Length)
             {
-                // Allow for trailing ID3v1 tag. If remaining bytes look like "TAG", not truncated
+                // The next frame would extend past the buffer. If the bytes
+                // from `pos` to EOF are exactly an ID3v1 tag (signature "TAG"
+                // at pos, length 128), the audio stream ended cleanly and we
+                // are just sitting on the trailing tag. Any other shape is
+                // real truncation.
                 int remaining = buf.Length - pos;
-                bool hasId3v1Tail =
-                    buf.Length >= Id3v1TagSize
-                    && buf[buf.Length - Id3v1TagSize] == (byte)'T'
-                    && buf[buf.Length - Id3v1TagSize + 1] == (byte)'A'
-                    && buf[buf.Length - Id3v1TagSize + 2] == (byte)'G';
+                bool atId3v1Tag =
+                    remaining == Id3v1TagSize
+                    && buf[pos] == (byte)'T'
+                    && buf[pos + 1] == (byte)'A'
+                    && buf[pos + 2] == (byte)'G';
 
-                if (!hasId3v1Tail || remaining < Id3v1TagSize)
+                if (!atId3v1Tag)
                     diagnostics.Add((Mp3Diagnostic.TRUNCATED_STREAM, frameCount));
 
                 break;
@@ -189,6 +213,7 @@ internal static class Mp3StructuralParser
             CheckXingLame(
                 buf,
                 firstFramePos,
+                firstFrameSize,
                 firstVersion,
                 firstChannelMode,
                 frameCount,
@@ -205,6 +230,7 @@ internal static class Mp3StructuralParser
     private static void CheckXingLame(
         ReadOnlySpan<byte> buf,
         int firstFramePos,
+        int firstFrameSize,
         int version,
         int channelMode,
         long actualFrameCount,
@@ -215,6 +241,13 @@ internal static class Mp3StructuralParser
 
         // Need at least the 4-byte signature + 4-byte flags field
         if (xingOffset + 8 > buf.Length)
+            return;
+
+        // Reject candidates whose Xing/Info signature would land past the
+        // end of the first frame: at very low bitrates (MPEG-2.5 8 kbps,
+        // 8 kHz) the standard Xing offset can exceed the frame and we'd
+        // pick up a signature from the second frame's payload.
+        if (xingOffset + 8 > firstFramePos + firstFrameSize)
             return;
 
         // Detect "Xing" (VBR) or "Info" (CBR) signature
@@ -256,35 +289,13 @@ internal static class Mp3StructuralParser
             }
         }
 
-        // LAME tag: "LAME" signature at xingOffset + LameTagRelativeOffset (120 bytes).
-        // The Xing/Info frame is structured so the LAME extension always starts at this fixed
-        // offset after the Xing/Info signature, regardless of VBR/CBR or MPEG version.
-        int lameTagPos = xingOffset + LameTagRelativeOffset;
-        if (lameTagPos + 4 > buf.Length)
-            return;
-
-        bool isLame =
-            buf[lameTagPos] == (byte)'L'
-            && buf[lameTagPos + 1] == (byte)'A'
-            && buf[lameTagPos + 2] == (byte)'M'
-            && buf[lameTagPos + 3] == (byte)'E';
-
-        if (!isLame)
-            return;
-
-        // LAME CRC covers the first 190 bytes of the info frame (bytes 0–189),
-        // and is stored big-endian at bytes 190–191 of that same frame.
-        const int LameCrcCoverage = 190; // bytes covered by the CRC
-        const int LameCrcOffset = 190; // byte position of the stored CRC high byte
-        if (firstFramePos + LameCrcOffset + 2 > buf.Length)
-            return;
-
-        int lameCrcStored =
-            (buf[firstFramePos + LameCrcOffset] << 8) | buf[firstFramePos + LameCrcOffset + 1];
-        ushort lameCrcComputed = CrcLameTag(buf, firstFramePos, LameCrcCoverage);
-
-        if (lameCrcStored != lameCrcComputed)
-            diagnostics.Add((Mp3Diagnostic.LAME_TAG_CRC_MISMATCH, 0));
+        // Note: the LAME extension tag CRC (at Xing offset 120+34) is intentionally
+        // not verified. It only protects encoder metadata (version string, ReplayGain,
+        // encoder delay, gain), never audio. Reference verifiers like mp3val and
+        // foobar2000's File Integrity Verifier do not check it either, and our own
+        // implementation produces systematic false positives across different LAME
+        // releases (3.90, 3.99r observed). The Xing/Info frame count check above
+        // remains as the useful header-level integrity signal.
     }
 
     // -------------------------------------------------------------------------
@@ -319,15 +330,77 @@ internal static class Mp3StructuralParser
     // Helpers
     // -------------------------------------------------------------------------
 
-    private static int FindNextSync(ReadOnlySpan<byte> buf, int from)
+    /// <summary>
+    /// Look for the next valid MP3 frame header. A bare 0xFF E? sync word is
+    /// not enough because audio payload bytes can match it by accident; only
+    /// candidates whose static header (version / layer / bitrate / sample
+    /// rate) is legal are accepted, and when <paramref name="expectedVersion"/>
+    /// or <paramref name="expectedSrIdx"/> are non-negative the candidate
+    /// must match them as well (real MP3 streams keep version + sample rate
+    /// stable; only the bitrate varies across VBR frames).
+    /// When <paramref name="requireDoubleSync"/> is set, the candidate is
+    /// only accepted if the implied next-frame position also starts with a
+    /// sync word, which rules out lone false positives inside genuine junk.
+    /// </summary>
+    private static int FindNextSync(
+        ReadOnlySpan<byte> buf,
+        int from,
+        int expectedVersion = -1,
+        int expectedSrIdx = -1,
+        bool requireDoubleSync = false
+    )
     {
-        for (int i = from; i <= buf.Length - 2; i++)
+        for (int i = from; i <= buf.Length - Mp3Format.FrameHeaderSize; i++)
         {
-            if (
-                buf[i] == Mp3Format.SyncByte
-                && (buf[i + 1] & Mp3Format.SyncMask) == Mp3Format.SyncMask
-            )
-                return i;
+            if (buf[i] != Mp3Format.SyncByte)
+                continue;
+            byte h1 = buf[i + 1];
+            if ((h1 & Mp3Format.SyncMask) != Mp3Format.SyncMask)
+                continue;
+
+            byte h2 = buf[i + 2];
+            int version = (h1 >> 3) & 0x03;
+            int layer = (h1 >> 1) & 0x03;
+            int bitrateIdx = (h2 >> 4) & 0x0F;
+            int srIdx = (h2 >> 2) & 0x03;
+            if (version == 1 || layer != 1 || bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3)
+                continue;
+
+            if (expectedVersion >= 0 && version != expectedVersion)
+                continue;
+            if (expectedSrIdx >= 0 && srIdx != expectedSrIdx)
+                continue;
+
+            if (requireDoubleSync)
+            {
+                int paddingBit = (h2 >> 1) & 0x01;
+                int bitrate =
+                    (
+                        version == Mp3Format.Mpeg1Version
+                            ? Mp3Format.Mpeg1L3Bitrate
+                            : Mp3Format.Mpeg2L3Bitrate
+                    )[bitrateIdx] * 1_000;
+                int sampleRate = Mp3Format.SampleRates[version][srIdx];
+                int coefficient =
+                    version == Mp3Format.Mpeg1Version
+                        ? Mp3Format.FrameSizeCoeffMpeg1
+                        : Mp3Format.FrameSizeCoeffMpeg2;
+                int frameSize = (coefficient * bitrate / sampleRate) + paddingBit;
+                int next = i + frameSize;
+                // Stream end inside this frame is acceptable (truncation
+                // path will catch it). Otherwise demand a sync at the
+                // implied next-frame boundary.
+                if (next + 1 < buf.Length)
+                {
+                    if (
+                        buf[next] != Mp3Format.SyncByte
+                        || (buf[next + 1] & Mp3Format.SyncMask) != Mp3Format.SyncMask
+                    )
+                        continue;
+                }
+            }
+
+            return i;
         }
         return -1;
     }
@@ -353,37 +426,13 @@ internal static class Mp3StructuralParser
         | buf[offset + 3];
 
     // -------------------------------------------------------------------------
-    // CRC-16/ARC: poly=0x8005, init=0xFFFF, input reflected, output reflected.
-    // Used for MP3 frame header protection (ISO 11172-3).
+    // CRC-16/MPEG: poly=0x8005, init=0xFFFF, MSB-first, no reflection, no final XOR.
+    // ISO/IEC 11172-3 §2.4.3.1 — MP3 frame header protection.
     // Pass init=0xFFFF to start a new CRC, or a prior return value to continue.
     // -------------------------------------------------------------------------
 
     private static ushort Crc16(ushort crc, ReadOnlySpan<byte> buf, int offset, int length)
     {
-        for (int i = 0; i < length; i++)
-        {
-            byte b = buf[offset + i];
-            for (int bit = 0; bit < 8; bit++)
-            {
-                bool databit = (b & 1) != 0;
-                bool crcBit = (crc & 1) != 0;
-                crc >>= 1;
-                if (databit ^ crcBit)
-                    crc ^= 0xA001; // reflected 0x8005
-                b >>= 1;
-            }
-        }
-        return crc;
-    }
-
-    // -------------------------------------------------------------------------
-    // CRC-16 used by the LAME tag: poly=0x8005, init=0x0000, NOT reflected (MSB-first).
-    // Matches the CRC_update() function in libmp3lame/VbrTag.c.
-    // -------------------------------------------------------------------------
-
-    private static ushort CrcLameTag(ReadOnlySpan<byte> buf, int offset, int length)
-    {
-        ushort crc = 0x0000;
         for (int i = 0; i < length; i++)
         {
             crc ^= (ushort)(buf[offset + i] << 8);

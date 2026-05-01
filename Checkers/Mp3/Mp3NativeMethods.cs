@@ -16,7 +16,10 @@ internal static class Mp3NativeMethods
     internal static extern int mpg123_init();
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr mpg123_new(string? decoder, ref int error);
+    internal static extern IntPtr mpg123_new(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? decoder,
+        ref int error
+    );
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int mpg123_open_feed(IntPtr mh);
@@ -26,6 +29,10 @@ internal static class Mp3NativeMethods
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int mpg123_read(IntPtr mh, byte[] outBuffer, nuint size, out nuint done);
+
+    /// <summary>Returns the index of the next MPEG frame to be decoded (0-based).</summary>
+    [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern long mpg123_tellframe(IntPtr mh);
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
     internal static extern void mpg123_delete(IntPtr mh);

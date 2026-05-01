@@ -49,10 +49,11 @@ public sealed class MainForm : Form
     private readonly BufferedListView _listView;
     private readonly TextProgressBar _globalBar;
     private readonly Panel _globalBarWrapper;
-    private readonly Button _startButton;
-    private readonly Button _cancelButton;
-    private readonly Label _statusLabel;
-    private readonly Panel _bottomPanel;
+    private readonly ToolStripButton _startButton;
+    private readonly ToolStripButton _cancelButton;
+    private readonly ToolStripButton _clearButton;
+    private readonly ToolStripButton _helpPanelButton;
+    private readonly ToolStripStatusLabel _statusLabel;
     private readonly StatusStrip _statusStrip;
     private readonly ToolStripStatusLabel _labelFiles;
     private readonly ToolStripStatusLabel _labelSize;
@@ -61,11 +62,19 @@ public sealed class MainForm : Form
     private readonly ToolStripStatusLabel _labelStorage;
     private readonly ToolStripSeparator _sepSize;
     private readonly ToolStripSeparator _sepStorage;
+    private readonly ToolStripSeparator _sepStatus;
     private readonly System.Windows.Forms.Timer _ramTimer;
     private readonly SplitContainer _splitContainer;
     private readonly HtmlPanel _htmlPanel;
     private readonly MenuStrip _menuStrip;
+    private readonly ToolStrip _toolStrip;
     private readonly ToolStripMenuItem _menuViewHelpPanel;
+    private readonly ToolStripMenuItem _menuScanStart;
+    private readonly ToolStripMenuItem _menuScanCancel;
+    private readonly ToolStripMenuItem _menuClearList;
+    private readonly Image _iconPlay;
+    private readonly Image _iconPause;
+    private readonly List<Image> _ownedIcons = [];
 
     private int _countOk;
     private int _countMetadata;
@@ -82,8 +91,9 @@ public sealed class MainForm : Form
     private const int ColError = 7;
 
     private readonly System.Windows.Forms.Timer _progressBarTimer;
+    private Icon? _smallIcon;
+    private Icon? _bigIcon;
 
-    private const int ButtonRowHeight = 40;
     private const int GlobalBarHeight = 26;
 
     // Initial column widths in pixels (user-resizable at runtime)
@@ -103,11 +113,13 @@ public sealed class MainForm : Form
     {
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
         Text = $"Audio Integrity Checker v{v.Major}.{v.Minor}.{v.Build}";
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = SystemFonts.MessageBoxFont!;
         MinimumSize = new Size(900, 580);
         Size = new Size(1080, 640);
         StartPosition = FormStartPosition.CenterScreen;
 
-        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        LoadEmbeddedIcon();
 
         _listView = new BufferedListView
         {
@@ -161,19 +173,6 @@ public sealed class MainForm : Form
         _listView.DrawItem += (_, _) => { };
         _listView.DrawSubItem += OnDrawSubItem;
 
-        var listBorderPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(1, 1, 0, 1), // left, top, no right, bottom
-            BackColor = SystemColors.ControlDark,
-        };
-        var listInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
-        listInnerPanel.Controls.Add(_listView);
-        listBorderPanel.Controls.Add(listInnerPanel);
-
-        var listPanel = new Panel { Dock = DockStyle.Fill };
-        listPanel.Controls.Add(listBorderPanel);
-
         var helpBackColor = Color.FromArgb(245, 245, 245);
         _htmlPanel = new HtmlPanel
         {
@@ -183,59 +182,108 @@ public sealed class MainForm : Form
             Text = HelpContent.GetWelcomeHtml(),
         };
 
-        var helpBorderPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(0, 1, 1, 1), // no left, top, right, bottom
-            BackColor = SystemColors.ControlDark,
-        };
-        var helpInnerPanel = new Panel { Dock = DockStyle.Fill, BackColor = helpBackColor };
-        helpInnerPanel.Controls.Add(_htmlPanel);
-        helpBorderPanel.Controls.Add(helpInnerPanel);
+        _iconPlay = LoadOwnedIcon(ToolStripIcons.ControlPlay);
+        _iconPause = LoadOwnedIcon(ToolStripIcons.ControlPause);
 
-        _bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = ButtonRowHeight };
-
-        _startButton = new Button
+        _startButton = new ToolStripButton
         {
-            Text = "Start scan",
-            Width = 90,
-            Height = 26,
+            Text = "Start",
+            Image = _iconPlay,
+            DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ImageScaling = ToolStripItemImageScaling.None,
             Enabled = false,
-            Margin = new Padding(0, 0, 4, 0),
+            ToolTipText = "Start the scan (F5)",
         };
-        _cancelButton = new Button
+
+        _cancelButton = new ToolStripButton
+        {
+            Text = "Cancel",
+            Image = LoadOwnedIcon(ToolStripIcons.Cancel),
+            DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ImageScaling = ToolStripItemImageScaling.None,
+            Enabled = false,
+            ToolTipText = "Cancel the running scan (Esc)",
+        };
+
+        _clearButton = new ToolStripButton
         {
             Text = "Clear",
-            Width = 80,
-            Height = 26,
+            Image = LoadOwnedIcon(ToolStripIcons.BinEmpty),
+            DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ImageScaling = ToolStripItemImageScaling.None,
             Enabled = false,
-            Margin = new Padding(0),
+            ToolTipText = "Clear the list (Ctrl+L)",
         };
-        _statusLabel = new Label
+
+        _helpPanelButton = new ToolStripButton
         {
-            Text = "",
-            AutoSize = false,
-            TextAlign = ContentAlignment.MiddleLeft,
-            Width = 600,
-            Height = 26,
+            Text = "Hide help panel",
+            Image = LoadOwnedIcon(ToolStripIcons.Help),
+            DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ImageScaling = ToolStripItemImageScaling.None,
+            Alignment = ToolStripItemAlignment.Right,
+            ToolTipText = "Toggle the help panel (F9)",
         };
 
-        _statusLabel.Margin = new Padding(4, 0, 0, 0);
+        var optionsToolBtn = new ToolStripButton
+        {
+            Text = "Options",
+            Image = LoadOwnedIcon(ToolStripIcons.Cog),
+            DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ImageScaling = ToolStripItemImageScaling.None,
+            Alignment = ToolStripItemAlignment.Right,
+            ToolTipText = "Open options (Ctrl+,)",
+        };
 
-        var buttonRow = new FlowLayoutPanel
+        var btnAddFolder = new ToolStripButton
+        {
+            Text = "Add folder",
+            Image = LoadOwnedIcon(ToolStripIcons.FolderAdd),
+            DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ImageScaling = ToolStripItemImageScaling.None,
+            ToolTipText = "Add a folder to the queue (Ctrl+Shift+O)",
+        };
+
+        var btnAddFiles = new ToolStripButton
+        {
+            Text = "Add files",
+            Image = LoadOwnedIcon(ToolStripIcons.PageWhiteAdd),
+            DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+            TextImageRelation = TextImageRelation.ImageBeforeText,
+            ImageScaling = ToolStripItemImageScaling.None,
+            ToolTipText = "Add files to the queue (Ctrl+O)",
+        };
+
+        _toolStrip = new ToolStrip
         {
             Dock = DockStyle.Top,
-            Height = ButtonRowHeight,
-            Padding = new Padding(6),
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
+            GripStyle = ToolStripGripStyle.Hidden,
+            ImageScalingSize = new Size(16, 16),
+            RenderMode = ToolStripRenderMode.System,
+            Padding = new Padding(4, 2, 4, 2),
         };
-        buttonRow.Controls.Add(_startButton);
-        buttonRow.Controls.Add(_cancelButton);
-        buttonRow.Controls.Add(_statusLabel);
-
-        // Left content area: list + buttons + progress bar
-        var leftPanel = new Panel { Dock = DockStyle.Fill };
+        _toolStrip.Items.AddRange([
+            btnAddFolder,
+            btnAddFiles,
+            new ToolStripSeparator(),
+            _startButton,
+            _cancelButton,
+            new ToolStripSeparator(),
+            _clearButton,
+            _helpPanelButton,
+            optionsToolBtn,
+        ]);
+        foreach (ToolStripItem item in _toolStrip.Items)
+        {
+            if (item is ToolStripButton btn)
+                btn.Padding = new Padding(2);
+        }
 
         _splitContainer = new SplitContainer
         {
@@ -245,14 +293,14 @@ public sealed class MainForm : Form
             SplitterWidth = 1,
             BackColor = SystemColors.ControlDark,
         };
-        _splitContainer.Panel1.Controls.Add(listPanel);
-        _splitContainer.Panel2.Controls.Add(helpBorderPanel);
+        _splitContainer.Panel1.Controls.Add(_listView);
+        _splitContainer.Panel2.Controls.Add(_htmlPanel);
 
         _globalBarWrapper = new Panel
         {
             Dock = DockStyle.Bottom,
             Height = 0,
-            Padding = new Padding(4, 0, 4, 4),
+            Padding = new Padding(4, 4, 4, 4),
             Visible = false,
         };
         _globalBar = new TextProgressBar
@@ -261,62 +309,125 @@ public sealed class MainForm : Form
             Minimum = 0,
             Maximum = 100,
             Value = 0,
+            AccessibleName = "Scan progress",
         };
         _globalBarWrapper.Controls.Add(_globalBar);
 
-        _bottomPanel.Controls.Add(_globalBarWrapper);
-        _bottomPanel.Controls.Add(buttonRow);
-
         // ---- Menu strip ----
         var menuFile = new ToolStripMenuItem("&File");
-        var menuAddFolder = new ToolStripMenuItem("Add folder...", null, OnMenuAddFolder);
-        var menuAddFiles = new ToolStripMenuItem("Add files...", null, OnMenuAddFiles);
+        var menuAddFiles = new ToolStripMenuItem("Add files…", null, OnMenuAddFiles)
+        {
+            ShortcutKeys = Keys.Control | Keys.O,
+        };
+        var menuAddFolder = new ToolStripMenuItem("Add folder…", null, OnMenuAddFolder)
+        {
+            ShortcutKeys = Keys.Control | Keys.Shift | Keys.O,
+        };
+        _menuClearList = new ToolStripMenuItem("Clear list", null, (_, _) => OnClear())
+        {
+            ShortcutKeys = Keys.Control | Keys.L,
+            Enabled = false,
+        };
+        var menuOptions = new ToolStripMenuItem("Options…", null, OnMenuOptions)
+        {
+            ShortcutKeys = Keys.Control | Keys.Oemcomma,
+            ShortcutKeyDisplayString = "Ctrl+,",
+        };
         var menuExit = new ToolStripMenuItem("Exit", null, (_, _) => Close());
         menuFile.DropDownItems.AddRange([
-            menuAddFolder,
             menuAddFiles,
+            menuAddFolder,
+            new ToolStripSeparator(),
+            _menuClearList,
+            new ToolStripSeparator(),
+            menuOptions,
             new ToolStripSeparator(),
             menuExit,
         ]);
 
-        var menuView = new ToolStripMenuItem("&View");
-        _menuViewHelpPanel = new ToolStripMenuItem("Show help panel", null, OnMenuToggleHelpPanel)
+        var menuScan = new ToolStripMenuItem("&Scan");
+        _menuScanStart = new ToolStripMenuItem("Start", null, OnStartClick)
         {
-            Checked = true,
+            ShortcutKeys = Keys.F5,
+            Enabled = false,
+        };
+        _menuScanCancel = new ToolStripMenuItem("Cancel", null, OnCancelClick) { Enabled = false };
+        menuScan.DropDownItems.AddRange([_menuScanStart, _menuScanCancel]);
+
+        var menuView = new ToolStripMenuItem("&View");
+        _menuViewHelpPanel = new ToolStripMenuItem("Hide help panel", null, OnMenuToggleHelpPanel)
+        {
+            ShortcutKeys = Keys.F9,
         };
         var menuAutoResize = new ToolStripMenuItem(
-            "Auto resize columns",
+            "Auto-fit columns",
             null,
             OnMenuAutoResizeColumns
         );
+        var menuResetColumns = new ToolStripMenuItem("Reset columns", null, OnMenuResetColumns);
         menuView.DropDownItems.AddRange([
             _menuViewHelpPanel,
             new ToolStripSeparator(),
             menuAutoResize,
+            menuResetColumns,
         ]);
 
-        var menuTools = new ToolStripMenuItem("&Tools");
-        var menuOptions = new ToolStripMenuItem("&Options…", null, OnMenuOptions);
-        menuTools.DropDownItems.Add(menuOptions);
+        var menuHelp = new ToolStripMenuItem("&Help");
+        var menuKeyboardShortcuts = new ToolStripMenuItem(
+            "Keyboard shortcuts",
+            null,
+            OnMenuKeyboardShortcuts
+        )
+        {
+            ShortcutKeys = Keys.Shift | Keys.F1,
+        };
+        var menuAbout = new ToolStripMenuItem("About", null, OnMenuAbout);
+        var menuGitHub = new ToolStripMenuItem("View on GitHub…", null, OnMenuViewGitHub);
+        menuHelp.DropDownItems.AddRange([
+            menuKeyboardShortcuts,
+            new ToolStripSeparator(),
+            menuAbout,
+            menuGitHub,
+        ]);
 
         _menuStrip = new MenuStrip();
-        _menuStrip.Items.AddRange([menuFile, menuView, menuTools]);
+        _menuStrip.Items.AddRange([menuFile, menuScan, menuView, menuHelp]);
 
         // ---- Column header context menu ----
         BuildColumnHeaderContextMenu();
 
-        _labelFiles = new ToolStripStatusLabel();
+        _labelFiles = new ToolStripStatusLabel { AccessibleName = "Queued file count" };
         _sepSize = new ToolStripSeparator { Visible = false };
-        _labelSize = new ToolStripStatusLabel { Visible = false };
+        _labelSize = new ToolStripStatusLabel
+        {
+            Visible = false,
+            AccessibleName = "Total queue size",
+        };
         _sepStorage = new ToolStripSeparator { Visible = false };
-        _labelStorage = new ToolStripStatusLabel { Visible = false };
+        _labelStorage = new ToolStripStatusLabel
+        {
+            Visible = false,
+            AccessibleName = "Storage device",
+        };
+        _sepStatus = new ToolStripSeparator { Visible = false };
         int workerCount = Math.Min(Environment.ProcessorCount, 8);
         _labelRam = new ToolStripStatusLabel(
             $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}"
-        );
+        )
+        {
+            AccessibleName = "RAM usage",
+        };
         var sepRam = new ToolStripSeparator();
-        _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}");
-        var spring = new ToolStripStatusLabel { Spring = true };
+        _labelWorkers = new ToolStripStatusLabel($"Workers: {workerCount}")
+        {
+            AccessibleName = "Worker thread count",
+        };
+        _statusLabel = new ToolStripStatusLabel
+        {
+            Spring = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AccessibleName = "Scan status",
+        };
 
         _statusStrip = new StatusStrip();
         _statusStrip.Items.AddRange([
@@ -325,7 +436,8 @@ public sealed class MainForm : Form
             _labelSize,
             _sepStorage,
             _labelStorage,
-            spring,
+            _sepStatus,
+            _statusLabel,
             _labelWorkers,
             sepRam,
             _labelRam,
@@ -339,10 +451,19 @@ public sealed class MainForm : Form
             _labelRam.Text = $"RAM: {FormatBytes(Process.GetCurrentProcess().WorkingSet64)}";
         _ramTimer.Start();
 
+        var topSeparator = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 1,
+            BackColor = SystemColors.ControlDark,
+        };
+
         Controls.Add(_splitContainer);
-        Controls.Add(_bottomPanel);
-        Controls.Add(_menuStrip);
+        Controls.Add(_globalBarWrapper);
         Controls.Add(_statusStrip);
+        Controls.Add(topSeparator);
+        Controls.Add(_toolStrip);
+        Controls.Add(_menuStrip);
         MainMenuStrip = _menuStrip;
 
         AllowDrop = true;
@@ -353,6 +474,11 @@ public sealed class MainForm : Form
         _listView.DragDrop += OnDragDrop;
         _startButton.Click += OnStartClick;
         _cancelButton.Click += OnCancelClick;
+        _clearButton.Click += (_, _) => OnClear();
+        _helpPanelButton.Click += OnMenuToggleHelpPanel;
+        optionsToolBtn.Click += OnMenuOptions;
+        btnAddFolder.Click += OnMenuAddFolder;
+        btnAddFiles.Click += OnMenuAddFiles;
         _listView.SelectedIndexChanged += OnSelectedIndexChanged;
 
         RegisterCheckers();
@@ -398,8 +524,8 @@ public sealed class MainForm : Form
         else
         {
             _splitContainer.Panel2Collapsed = true;
-            _menuViewHelpPanel.Checked = false;
         }
+        UpdateHelpPanelLabel(prefs.HelpPanelVisible);
 
         // Restore hidden columns
         if (prefs.HiddenColumns.Count > 0)
@@ -568,6 +694,7 @@ public sealed class MainForm : Form
         {
             _sepStorage.Visible = false;
             _labelStorage.Visible = false;
+            _sepStatus.Visible = false;
             return;
         }
 
@@ -575,6 +702,7 @@ public sealed class MainForm : Form
         _labelStorage.Text = FormatStorageDisplay(info);
         _sepStorage.Visible = true;
         _labelStorage.Visible = true;
+        _sepStatus.Visible = true;
 
         // Automatic mode depends on the detected storage type, so refresh the
         // Workers label now that we know what disk the queue sits on.
@@ -619,23 +747,37 @@ public sealed class MainForm : Form
 
     private async void OnStartClick(object? sender, EventArgs e)
     {
-        switch (_analysisState)
+        try
         {
-            case AnalysisState.Idle:
-                await StartAnalysisAsync();
-                break;
-            case AnalysisState.Analysing:
-                PauseAnalysis();
-                break;
-            case AnalysisState.Paused:
-                ResumeAnalysis();
-                break;
+            switch (_analysisState)
+            {
+                case AnalysisState.Idle:
+                    await StartAnalysisAsync();
+                    break;
+                case AnalysisState.Analysing:
+                    PauseAnalysis();
+                    break;
+                case AnalysisState.Paused:
+                    ResumeAnalysis();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // async void event handler: an unhandled exception escaping here
+            // crashes the process. Surface it in the status bar so the user
+            // gets a chance to see what broke.
+            SetStatus($"Pipeline error: {ex.Message}");
+            SetAnalysisState(AnalysisState.Idle);
         }
     }
 
     private async Task StartAnalysisAsync()
     {
         if (_queuedFiles.Count == 0)
+            return;
+
+        if (!ValidateNativeLibrariesForQueue())
             return;
 
         SetAnalysisState(AnalysisState.Analysing);
@@ -654,7 +796,7 @@ public sealed class MainForm : Form
         foreach (ListViewItem item in _listView.Items)
         {
             item.SubItems[ColSeverity].ForeColor = _listView.ForeColor;
-            item.SubItems[ColResult].Text = "Pending...";
+            item.SubItems[ColResult].Text = "Pending…";
             item.SubItems[ColSeverity].Text = "";
             item.SubItems[ColMessage].Text = "";
             item.SubItems[ColError].Text = "";
@@ -690,10 +832,7 @@ public sealed class MainForm : Form
             );
             _analysisStopwatch.Stop();
 
-            string timeText =
-                _analysisStopwatch.Elapsed.TotalSeconds < 60 // format as "Xs" if under a minute, otherwise "Xm YYs"
-                    ? $"{_analysisStopwatch.Elapsed.TotalSeconds:F1}s"
-                    : $"{(int)_analysisStopwatch.Elapsed.TotalMinutes}m {_analysisStopwatch.Elapsed.Seconds:D2}s";
+            string timeText = FormatElapsed(_analysisStopwatch.Elapsed);
             int n = _completedFiles;
             SetStatus($"Processed {(n == 1 ? "1 file" : $"{n} files")} in {timeText}.");
 
@@ -719,6 +858,56 @@ public sealed class MainForm : Form
             ShowGlobalBar(false);
             _ = Task.Run(TrimWorkingSet);
         }
+    }
+
+    private bool ValidateNativeLibrariesForQueue()
+    {
+        var prefs = UserPreferences.Load();
+        bool libFlacOk = NativeLibraryLoader.IsLibFlacAvailable(prefs.LibFlacPath);
+        bool mpg123Ok = NativeLibraryLoader.IsMpg123Available(prefs.Mpg123Path);
+
+        var formatsInQueue = _queuedFiles
+            .Select(f => f.Checker.FormatId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var missingByFormat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (formatsInQueue.Contains("FLAC") && !libFlacOk)
+            missingByFormat["FLAC"] = "libFLAC.dll";
+        if (formatsInQueue.Contains("MP3") && !mpg123Ok)
+            missingByFormat["MP3"] = "mpg123.dll";
+
+        if (missingByFormat.Count == 0)
+            return true;
+
+        var errorColor = ResultFormatting.GetSeverityColor(ResultSeverity.High);
+        foreach (ListViewItem item in _listView.Items)
+        {
+            string format = item.SubItems[ColFormat].Text;
+            if (!missingByFormat.TryGetValue(format, out string? lib))
+                continue;
+            item.SubItems[ColResult].Text = "ERROR";
+            item.SubItems[ColSeverity].Text = ResultSeverity.High.ToString();
+            item.SubItems[ColSeverity].ForeColor = errorColor;
+            item.SubItems[ColMessage].Text = $"Missing native library: {lib}";
+            item.SubItems[ColError].Text = "Configure the path in File > Options > Libraries.";
+        }
+
+        string missingList = string.Join(
+            "\n  • ",
+            missingByFormat.Select(kv => $"{kv.Value} (required for {kv.Key} files)")
+        );
+        MessageBox.Show(
+            this,
+            "Cannot start scan: required native libraries are missing.\n\n"
+                + $"Missing:\n  • {missingList}\n\n"
+                + "Configure the path from File > Options > Libraries, or\n"
+                + "remove the affected files from the queue before retrying.",
+            "Missing native libraries",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error
+        );
+
+        return false;
     }
 
     private void PauseAnalysis()
@@ -748,7 +937,9 @@ public sealed class MainForm : Form
         }
         else
         {
-            _startButton.Text = $"Waiting ({inFlight})...";
+            string waiting = $"Waiting ({inFlight})…";
+            _startButton.Text = waiting;
+            _menuScanStart.Text = waiting;
         }
     }
 
@@ -762,23 +953,37 @@ public sealed class MainForm : Form
 
     private void OnCancelClick(object? sender, EventArgs e)
     {
-        if (_analysisState != AnalysisState.Idle)
-        {
-            _cancelButton.Enabled = false;
-            SetStatus("Cancelling…");
-            // Unblock the pause gate so the cancellation token propagates
-            // through the pipeline loop instead of hanging.
-            _pauseController?.Reset();
-            _analysisCts?.Cancel();
-        }
-        else
-        {
-            OnClear();
-        }
+        if (_analysisState == AnalysisState.Idle)
+            return;
+        _cancelButton.Enabled = false;
+        _menuScanCancel.Enabled = false;
+        int inFlight = _startedFiles - Volatile.Read(ref _completedFiles);
+        SetStatus(inFlight > 0 ? $"Cancelling… ({inFlight} in flight)" : "Cancelling…");
+        // Unblock the pause gate so the cancellation token propagates
+        // through the pipeline loop instead of hanging.
+        _pauseController?.Reset();
+        _analysisCts?.Cancel();
     }
 
     private void OnClear()
     {
+        // Once a scan has completed, the result rows are the only record of
+        // what was checked. Confirm before throwing them away. Skip the
+        // prompt if the list is empty or only holds Pending rows.
+        if (HasCompletedResults())
+        {
+            var choice = MessageBox.Show(
+                this,
+                $"Clear {_listView.Items.Count} scan result{(_listView.Items.Count == 1 ? "" : "s")}?",
+                "Clear list",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2
+            );
+            if (choice != DialogResult.OK)
+                return;
+        }
+
         _pauseController?.Reset();
         _pauseController = null;
         _scanCts?.Cancel();
@@ -800,12 +1005,24 @@ public sealed class MainForm : Form
 
         _sepStorage.Visible = false;
         _labelStorage.Visible = false;
+        _sepStatus.Visible = false;
 
         UpdateStatusBar();
         UpdateHelpPanel();
         SetStatus("");
         SetAnalysisState(AnalysisState.Idle);
         TrimWorkingSet();
+    }
+
+    private bool HasCompletedResults()
+    {
+        foreach (ListViewItem item in _listView.Items)
+        {
+            string r = item.SubItems[ColResult].Text;
+            if (r is "OK" or "ISSUE" or "ERROR")
+                return true;
+        }
+        return false;
     }
 
     private void OnMenuToggleHelpPanel(object? sender, EventArgs e)
@@ -824,7 +1041,14 @@ public sealed class MainForm : Form
             _splitContainer.Panel2Collapsed = true;
         }
 
-        _menuViewHelpPanel.Checked = opening;
+        UpdateHelpPanelLabel(opening);
+    }
+
+    private void UpdateHelpPanelLabel(bool visible)
+    {
+        string label = visible ? "Hide help panel" : "Show help panel";
+        _helpPanelButton.Text = label;
+        _menuViewHelpPanel.Text = label;
     }
 
     private void OnMenuAddFolder(object? sender, EventArgs e)
@@ -865,6 +1089,82 @@ public sealed class MainForm : Form
         // keeps its current worker count until it finishes.
         int workerCount = GetEffectiveWorkerCount(UserPreferences.Load(), CurrentStorageKind());
         _labelWorkers.Text = $"Workers: {workerCount}";
+    }
+
+    private void OnMenuResetColumns(object? sender, EventArgs e)
+    {
+        int[] defaults =
+        [
+            ColDirWidth,
+            ColFileWidth,
+            ColDurationWidth,
+            ColFormatWidth,
+            ColResultWidth,
+            ColSeverityWidth,
+            ColMessageWidth,
+            ColErrorWidth,
+        ];
+        _hiddenColumnWidths.Clear();
+
+        if (_listView.HeaderContextMenuStrip is ContextMenuStrip menu)
+        {
+            foreach (ToolStripMenuItem item in menu.Items)
+                item.Checked = true;
+        }
+
+        for (int i = 0; i < _listView.Columns.Count && i < defaults.Length; i++)
+            _listView.Columns[i].Width = defaults[i];
+    }
+
+    private void OnMenuKeyboardShortcuts(object? sender, EventArgs e)
+    {
+        using var dlg = new KeyboardShortcutsForm(_menuStrip);
+        dlg.ShowDialog(this);
+    }
+
+    private void OnMenuAbout(object? sender, EventArgs e)
+    {
+        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
+        string text =
+            $"Audio Integrity Checker v{v.Major}.{v.Minor}.{v.Build}\n"
+            + "\n"
+            + "A read-only scanner that detects corruption, structural anomalies "
+            + "and metadata inconsistencies in audio files (FLAC, MP3).\n"
+            + "\n"
+            + "https://github.com/ewauq/AudioIntegrityChecker";
+        MessageBox.Show(this, text, "About", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void OnMenuViewGitHub(object? sender, EventArgs e)
+    {
+        try
+        {
+            Process.Start(
+                new ProcessStartInfo("https://github.com/ewauq/AudioIntegrityChecker")
+                {
+                    UseShellExecute = true,
+                }
+            );
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not open browser: {ex.Message}");
+        }
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == Keys.Escape && _analysisState != AnalysisState.Idle)
+        {
+            OnCancelClick(this, EventArgs.Empty);
+            return true;
+        }
+        if (keyData == Keys.F1)
+        {
+            OnMenuToggleHelpPanel(this, EventArgs.Empty);
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     /// <summary>
@@ -991,7 +1291,7 @@ public sealed class MainForm : Form
         var resultText = item.SubItems[ColResult].Text;
 
         // Not yet analyzed
-        if (resultText is "" or "Pending..." || resultText.EndsWith('%'))
+        if (resultText is "" or "Pending…" || resultText.EndsWith('%'))
         {
             _htmlPanel.Text = HelpContent.GetPendingHtml();
             return;
@@ -1015,19 +1315,40 @@ public sealed class MainForm : Form
     {
         _analysisState = state;
         bool active = state != AnalysisState.Idle;
-        _cancelButton.Text = active ? "Cancel" : "Clear";
-        _cancelButton.Enabled = active || _listView.Items.Count > 0;
-        _startButton.Text = state switch
+        bool hasItems = _listView.Items.Count > 0;
+
+        _cancelButton.Enabled = active;
+        _menuScanCancel.Enabled = active;
+        _clearButton.Enabled = !active && hasItems;
+        _menuClearList.Enabled = !active && hasItems;
+
+        string startText = state switch
         {
             AnalysisState.Analysing => "Pause",
-            AnalysisState.Pausing => $"Waiting ({_startedFiles - _completedFiles})...",
+            AnalysisState.Pausing => $"Waiting ({_startedFiles - _completedFiles})…",
             AnalysisState.Paused => "Resume",
-            _ => "Start scan",
+            _ => "Start",
         };
-        _startButton.Enabled =
+        _startButton.Text = startText;
+        _menuScanStart.Text = startText;
+
+        _startButton.ToolTipText = state switch
+        {
+            AnalysisState.Analysing => "Pause the scan (F5)",
+            AnalysisState.Pausing => "Waiting for in-flight files to finish…",
+            AnalysisState.Paused => "Resume the scan (F5)",
+            _ => "Start the scan (F5)",
+        };
+
+        _startButton.Image = state == AnalysisState.Analysing ? _iconPause : _iconPlay;
+
+        bool startEnabled =
             state == AnalysisState.Analysing
             || state == AnalysisState.Paused
             || (state == AnalysisState.Idle && _queuedFiles.Count > 0);
+        _startButton.Enabled = startEnabled;
+        _menuScanStart.Enabled = startEnabled;
+
         _globalBar.Paused = state == AnalysisState.Paused;
     }
 
@@ -1111,20 +1432,24 @@ public sealed class MainForm : Form
         if (string.IsNullOrEmpty(filePath))
             return;
 
-        Process.Start(
-            new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
-            {
-                UseShellExecute = true,
-            }
-        );
+        try
+        {
+            Process.Start(
+                new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
+                {
+                    UseShellExecute = true,
+                }
+            );
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not reveal file: {ex.Message}");
+        }
     }
 
     private void ShowCompletionDialog(TimeSpan elapsed)
     {
-        string timeText =
-            elapsed.TotalSeconds < 60
-                ? $"{elapsed.TotalSeconds:F1}s"
-                : $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
+        string timeText = FormatElapsed(elapsed);
 
         var builder = new System.Text.StringBuilder();
         builder.AppendLine(
@@ -1191,9 +1516,7 @@ public sealed class MainForm : Form
     private void ShowGlobalBar(bool visible)
     {
         _globalBarWrapper.Visible = visible;
-        _globalBarWrapper.Height = visible ? GlobalBarHeight + 4 : 0;
-        _bottomPanel.Height =
-            ButtonRowHeight + (_globalBarWrapper.Visible ? _globalBarWrapper.Height : 0);
+        _globalBarWrapper.Height = visible ? GlobalBarHeight + 8 : 0;
         if (visible)
             _progressBarTimer.Start();
         else
@@ -1226,6 +1549,65 @@ public sealed class MainForm : Form
         IntPtr maximumSize
     );
 
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+    private const int WM_SETICON = 0x0080;
+    private const int ICON_SMALL = 0;
+    private const int ICON_BIG = 1;
+
+    private void LoadEmbeddedIcon()
+    {
+        var asm = typeof(MainForm).Assembly;
+        using var stream = asm.GetManifestResourceStream("AudioIntegrityChecker.icon.ico");
+        if (stream is null)
+        {
+            Icon = SystemIcons.Application;
+            return;
+        }
+
+        // Load full multi-size icon for alt-tab / jumplist.
+        Icon = new Icon(stream);
+
+        // Load explicit small (titlebar) and big (alt-tab large) sizes so Windows
+        // uses the pixel-perfect variants instead of rescaling a single HICON.
+        var smallSize = SystemInformation.SmallIconSize;
+        var bigSize = SystemInformation.IconSize;
+        stream.Position = 0;
+        _smallIcon = new Icon(stream, smallSize);
+        stream.Position = 0;
+        _bigIcon = new Icon(stream, bigSize);
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (_smallIcon is not null)
+            SendMessage(Handle, WM_SETICON, new IntPtr(ICON_SMALL), _smallIcon.Handle);
+        if (_bigIcon is not null)
+            SendMessage(Handle, WM_SETICON, new IntPtr(ICON_BIG), _bigIcon.Handle);
+    }
+
+    private Image LoadOwnedIcon(string resourceName)
+    {
+        var icon = ToolStripIcons.Load(resourceName);
+        _ownedIcons.Add(icon);
+        return icon;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _smallIcon?.Dispose();
+            _bigIcon?.Dispose();
+            foreach (var icon in _ownedIcons)
+                icon.Dispose();
+            _ownedIcons.Clear();
+        }
+        base.Dispose(disposing);
+    }
+
     private static void TrimWorkingSet()
     {
         // Force a full Gen2 GC with LOH compaction to reclaim the large byte[] buffers
@@ -1253,6 +1635,15 @@ public sealed class MainForm : Form
             : $"{(int)d.TotalMinutes}:{d.Seconds:D2}";
     }
 
+    private static string FormatElapsed(TimeSpan elapsed)
+    {
+        if (elapsed.TotalSeconds < 1)
+            return $"{(int)elapsed.TotalMilliseconds}ms";
+        if (elapsed.TotalSeconds < 60)
+            return $"{elapsed.TotalSeconds:F1}s";
+        return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
+    }
+
     private void OnProgressBarTick(object? sender, EventArgs e)
     {
         if (_globalBar.Style == ProgressBarStyle.Marquee)
@@ -1265,17 +1656,22 @@ public sealed class MainForm : Form
 
     private string BuildProgressBarText()
     {
-        int pct = _totalFiles > 0 ? (int)((double)_completedFiles / _totalFiles * 100) : 0;
+        // Read the worker-incremented counters with a memory barrier so the
+        // 500 ms UI timer doesn't render percentage and "X/Y files" pulled
+        // from different points in time.
+        int completed = Volatile.Read(ref _completedFiles);
+        int pct = _totalFiles > 0 ? (int)((double)completed / _totalFiles * 100) : 0;
         string elapsed = _analysisStopwatch.Elapsed.ToString(@"hh\:mm\:ss");
         if (_analysisState is AnalysisState.Pausing or AnalysisState.Paused)
-            return $"Paused - {pct}% - {_completedFiles}/{_totalFiles} files - Elapsed time: {elapsed}";
-        return $"Progression: {pct}% - {_completedFiles}/{_totalFiles} files"
+            return $"Paused - {pct}% - {completed}/{_totalFiles} files - Elapsed time: {elapsed}";
+        return $"Progression: {pct}% - {completed}/{_totalFiles} files"
             + $" - Elapsed time: {elapsed} - Remaining time: {BuildEtaString(_analysisStopwatch.Elapsed)}";
     }
 
     private string BuildEtaString(TimeSpan elapsed)
     {
-        if (elapsed.TotalSeconds < 3.0 || _completedFiles < 5)
+        int completed = Volatile.Read(ref _completedFiles);
+        if (elapsed.TotalSeconds < 3.0 || completed < 5)
             return "--:--:--";
 
         // Priority 1: bytes rate — more accurate than file count for variable sizes.
@@ -1287,10 +1683,10 @@ public sealed class MainForm : Form
         }
 
         // Priority 2: file count (fallback).
-        if (_completedFiles > 0)
+        if (completed > 0)
         {
-            double rate = _completedFiles / elapsed.TotalSeconds;
-            double remaining = (_totalFiles - _completedFiles) / rate;
+            double rate = completed / elapsed.TotalSeconds;
+            double remaining = (_totalFiles - completed) / rate;
             if (remaining > 0)
                 return TimeSpan.FromSeconds(remaining).ToString(@"hh\:mm\:ss");
         }

@@ -63,8 +63,6 @@ internal static class ResultFormatting
             return "Variable bitrate index does not match the content";
         if (msg.Contains("INFO_FRAME_COUNT_MISMATCH"))
             return "Constant bitrate index does not match the content";
-        if (msg.Contains("LAME_TAG_CRC_MISMATCH"))
-            return "Encoder metadata checksum is invalid";
 
         // Generic error messages from the checker infrastructure
         if (msg.Contains("not found"))

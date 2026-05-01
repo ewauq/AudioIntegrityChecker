@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using AudioIntegrityChecker.Core;
 using AudioIntegrityChecker.UI;
 
 [assembly: SupportedOSPlatform("windows")]
@@ -10,45 +11,14 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
 
-        var missing = CheckDependencies();
-        if (missing.Count > 0)
-        {
-            string list = string.Join("\n  • ", missing);
-            MessageBox.Show(
-                $"The following required libraries were not found next to the executable or in PATH:\n\n  • {list}\n\n"
-                    + $"Place them in the same folder as AudioIntegrityChecker.exe and restart the application.",
-                "Missing dependencies",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error
-            );
-            return;
-        }
+        // Configure the native library resolver before any P/Invoke fires, so
+        // user-configured paths for libFLAC.dll and mpg123.dll are honoured.
+        // Availability of each library is checked lazily at Start scan time
+        // against the queued file formats — the app always launches so the
+        // user can configure paths from File > Options > Libraries.
+        var prefs = UserPreferences.Load();
+        NativeLibraryLoader.Configure(prefs.LibFlacPath, prefs.Mpg123Path);
 
         Application.Run(new MainForm());
-    }
-
-    private static List<string> CheckDependencies()
-    {
-        var required = new[] { ("libFLAC.dll", "FLAC native decoder (https://xiph.org/flac/)") };
-
-        var missing = new List<string>();
-        foreach (var (file, description) in required)
-        {
-            if (!IsAvailable(file))
-                missing.Add($"{file}  ({description})");
-        }
-        return missing;
-    }
-
-    private static bool IsAvailable(string fileName)
-    {
-        // Use NativeLibrary.TryLoad: mirrors the exact DLL search order used by P/Invoke
-        // (app dir → System32 → Windows dir → CWD → PATH directories).
-        if (System.Runtime.InteropServices.NativeLibrary.TryLoad(fileName, out var handle))
-        {
-            System.Runtime.InteropServices.NativeLibrary.Free(handle);
-            return true;
-        }
-        return false;
     }
 }

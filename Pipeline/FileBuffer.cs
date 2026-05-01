@@ -59,6 +59,10 @@ internal sealed class FileBuffer : IDisposable
         // lets checkers read that padding and misdetect trailing garbage, so
         // we capture the actual file size up front instead.
         long fileSize = new FileInfo(filePath).Length;
+        if (fileSize > int.MaxValue)
+            throw new IOException(
+                $"File is too large to scan ({fileSize:N0} bytes; the in-memory buffer is capped at {int.MaxValue:N0})."
+            );
 
         MemoryMappedFile? file = null;
         MemoryMappedViewAccessor? view = null;
@@ -72,7 +76,7 @@ internal sealed class FileBuffer : IDisposable
                 MemoryMappedFileAccess.Read
             );
             view = file.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-            return new FileBuffer(file, view, checked((int)fileSize));
+            return new FileBuffer(file, view, (int)fileSize);
         }
         catch
         {

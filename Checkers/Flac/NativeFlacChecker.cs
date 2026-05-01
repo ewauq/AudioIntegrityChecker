@@ -143,6 +143,7 @@ internal sealed class NativeFlacChecker : IFormatChecker
         public int ErrorStatus;
         public bool ErrorIsWarning;
         public ulong ErrorAtSample;
+        public int ErrorAtBytePosition;
 
         public int LastReportedPercent = -1;
 
@@ -237,13 +238,7 @@ internal sealed class NativeFlacChecker : IFormatChecker
                         ? TimeSpan.FromSeconds((double)state.ErrorAtSample / state.SampleRate)
                         : null;
 
-                // LOST_SYNC at or after the STREAMINFO sample count means the decoder
-                // hit non-audio data (an ID3 tag or padding) appended after the last
-                // audio frame, not a mid-stream interruption.
-                bool isTrailingGarbage =
-                    state.ErrorStatus == 0 // LOST_SYNC
-                    && state.TotalSamples > 0
-                    && state.ErrorAtSample >= state.TotalSamples;
+                bool isTrailingGarbage = IsTrailingGarbage(state);
 
                 string message = isTrailingGarbage
                     ? "TRAILING_GARBAGE"
@@ -385,6 +380,57 @@ internal sealed class NativeFlacChecker : IFormatChecker
         state.ErrorStatus = status;
         state.ErrorIsWarning = IsBenignError(status);
         state.ErrorAtSample = state.DecodedSamples;
+        state.ErrorAtBytePosition = state.BufferPosition;
         state.HasError = true;
+    }
+
+    // Heuristic: when libFLAC reports LOST_SYNC past the declared sample
+    // count, or when STREAMINFO is unreadable but the error fires within
+    // the last few KB of the file and the trailing bytes look like an ID3
+    // tag, treat it as trailing garbage rather than a mid-stream break.
+    private static bool IsTrailingGarbage(DecodeState state)
+    {
+        if (state.ErrorStatus != 0) // not LOST_SYNC
+            return false;
+
+        if (state.TotalSamples > 0 && state.ErrorAtSample >= state.TotalSamples)
+            return true;
+
+        if (state.DecodedSamples == 0)
+            return false; // nothing decoded, this is not an end-of-stream event
+
+        // STREAMINFO missing or total_samples == 0 (valid per spec for
+        // streamed FLAC). Fall back to a byte-level check, but only at
+        // structurally valid ID3 positions: ID3v1 sits exactly at
+        // length-128 with signature "TAG", and an ID3v2 footer/header is
+        // expected within a handful of bytes of the LOST_SYNC point.
+        return HasStructuralId3Signature(state);
+    }
+
+    private static unsafe bool HasStructuralId3Signature(DecodeState state)
+    {
+        byte* p = (byte*)state.DataPtr;
+        int len = state.DataLength;
+
+        // ID3v1: "TAG" at exactly length-128 (the only valid position).
+        const int Id3v1Size = 128;
+        if (len >= Id3v1Size)
+        {
+            byte* tag = p + (len - Id3v1Size);
+            if (tag[0] == (byte)'T' && tag[1] == (byte)'A' && tag[2] == (byte)'G')
+                return true;
+        }
+
+        // ID3v2: "ID3" within 16 bytes after the LOST_SYNC point. A genuine
+        // trailing tag prepended by some tagger lands right where libFLAC
+        // gave up, not anywhere in an 8 KB window.
+        int probeStart = state.ErrorAtBytePosition;
+        int probeEnd = Math.Min(len - 3, probeStart + 16);
+        for (int i = probeStart; i <= probeEnd; i++)
+        {
+            if (p[i] == (byte)'I' && p[i + 1] == (byte)'D' && p[i + 2] == (byte)'3')
+                return true;
+        }
+        return false;
     }
 }
