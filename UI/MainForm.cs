@@ -780,7 +780,7 @@ public sealed class MainForm : Form
         foreach (ListViewItem item in _listView.Items)
         {
             item.SubItems[ColSeverity].ForeColor = _listView.ForeColor;
-            item.SubItems[ColResult].Text = "Pending...";
+            item.SubItems[ColResult].Text = "Pending…";
             item.SubItems[ColSeverity].Text = "";
             item.SubItems[ColMessage].Text = "";
             item.SubItems[ColError].Text = "";
@@ -921,7 +921,7 @@ public sealed class MainForm : Form
         }
         else
         {
-            string waiting = $"Waiting ({inFlight})...";
+            string waiting = $"Waiting ({inFlight})…";
             _startButton.Text = waiting;
             _menuScanStart.Text = waiting;
         }
@@ -956,6 +956,23 @@ public sealed class MainForm : Form
 
     private void OnClear()
     {
+        // Once a scan has completed, the result rows are the only record of
+        // what was checked. Confirm before throwing them away. Skip the
+        // prompt if the list is empty or only holds Pending rows.
+        if (HasCompletedResults())
+        {
+            var choice = MessageBox.Show(
+                this,
+                $"Clear {_listView.Items.Count} scan result{(_listView.Items.Count == 1 ? "" : "s")}?",
+                "Clear list",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2
+            );
+            if (choice != DialogResult.OK)
+                return;
+        }
+
         _pauseController?.Reset();
         _pauseController = null;
         _scanCts?.Cancel();
@@ -984,6 +1001,17 @@ public sealed class MainForm : Form
         SetStatus("");
         SetAnalysisState(AnalysisState.Idle);
         TrimWorkingSet();
+    }
+
+    private bool HasCompletedResults()
+    {
+        foreach (ListViewItem item in _listView.Items)
+        {
+            string r = item.SubItems[ColResult].Text;
+            if (r is "OK" or "ISSUE" or "ERROR")
+                return true;
+        }
+        return false;
     }
 
     private void OnMenuToggleHelpPanel(object? sender, EventArgs e)
@@ -1277,7 +1305,7 @@ public sealed class MainForm : Form
         var resultText = item.SubItems[ColResult].Text;
 
         // Not yet analyzed
-        if (resultText is "" or "Pending..." || resultText.EndsWith('%'))
+        if (resultText is "" or "Pending…" || resultText.EndsWith('%'))
         {
             _htmlPanel.Text = HelpContent.GetPendingHtml();
             return;
@@ -1311,7 +1339,7 @@ public sealed class MainForm : Form
         string startText = state switch
         {
             AnalysisState.Analysing => "Pause",
-            AnalysisState.Pausing => $"Waiting ({_startedFiles - _completedFiles})...",
+            AnalysisState.Pausing => $"Waiting ({_startedFiles - _completedFiles})…",
             AnalysisState.Paused => "Resume",
             _ => "Start",
         };
