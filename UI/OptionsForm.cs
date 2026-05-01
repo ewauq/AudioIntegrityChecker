@@ -33,6 +33,8 @@ internal sealed class OptionsForm : Form
         _origMpg123Path = prefs.Mpg123Path;
 
         Text = "Options";
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = SystemFonts.MessageBoxFont!;
         FormBorderStyle = FormBorderStyle.Sizable;
         SizeGripStyle = SizeGripStyle.Auto;
         StartPosition = FormStartPosition.CenterParent;

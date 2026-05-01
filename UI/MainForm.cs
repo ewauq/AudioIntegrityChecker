@@ -113,6 +113,8 @@ public sealed class MainForm : Form
     {
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
         Text = $"Audio Integrity Checker v{v.Major}.{v.Minor}.{v.Build}";
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = SystemFonts.MessageBoxFont!;
         MinimumSize = new Size(900, 580);
         Size = new Size(1080, 640);
         StartPosition = FormStartPosition.CenterScreen;
