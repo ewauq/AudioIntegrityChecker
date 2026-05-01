@@ -16,7 +16,10 @@ internal static class Mp3NativeMethods
     internal static extern int mpg123_init();
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr mpg123_new(string? decoder, ref int error);
+    internal static extern IntPtr mpg123_new(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? decoder,
+        ref int error
+    );
 
     [DllImport("mpg123.dll", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int mpg123_open_feed(IntPtr mh);
