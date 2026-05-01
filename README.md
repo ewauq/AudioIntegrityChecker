@@ -1,121 +1,71 @@
 # Audio Integrity Checker
 
-A Windows utility for verifying the integrity of audio files.
+A Windows desktop tool that scans your audio files and tells you which ones are corrupted.
 
-Drop a folder or individual files, click **Start scan**, and get a clear report of every corrupt or structurally broken file. A built-in help panel explains each diagnostic in plain language and suggests how to fix it.
+Drop a folder or a few files, hit **Start scan**, and read the results. A built-in help panel explains every issue in plain language and tells you what to do about it.
 
 ![Screenshot](https://i.imgur.com/uBGczxN.png)
 
 ## How it works
 
-Audio Integrity Checker loads each file into memory and runs it through its format-specific decoder from start to finish. There is no playback, just a full read of every byte. Any anomaly in the audio data is caught and reported.
+The tool reads each file from start to finish and runs it through a real audio decoder. Anything wrong with the audio (broken header, missing data, a frame that the decoder cannot read) shows up in the results.
 
-Files are processed in parallel across multiple threads (up to 8). On an SSD this makes a noticeable difference, since the bottleneck is pure decoding speed. On a HDD, mechanical seek time between files limits throughput, so a large collection will take longer than on flash storage.
+It is **read-only**. Your files are never modified.
 
-### FLAC
+Multiple files are scanned in parallel. On an SSD you should see a clear speedup. On a regular hard drive the disk itself becomes the bottleneck and a large library will simply take longer.
 
-Decoding is done via the official [libFLAC](https://xiph.org/flac/) library. Every frame carries a CRC checksum that covers its audio content. The decoder verifies each one against the actual data.
+## Reading the results
 
-If `libFLAC.dll` is not found next to the exe, the tool automatically falls back to `flac.exe` (searched in the application folder first, then in PATH).
+Every file gets a **Result** (OK or ISSUE) and, when something is wrong, a **Severity**:
 
+| Severity | What it means |
+|---|---|
+| **Low** | Cosmetic issue. The audio plays fine. Often a metadata tag glitch. |
+| **Medium** | The container has a small structural anomaly, but the audio is intact. |
+| **High** | The scan could not finish. The state of the file is uncertain. |
+| **Critical** | The audio itself is corrupted. You will hear it during playback. |
 
-### MP3
+The **Message** column tells you what was found and where (timecode and frame number when relevant). Select rows and press **Ctrl+C** to copy them as JSON.
 
-MP3 analysis runs in two sequential passes on the same in-memory buffer.
+### Common issues you might see
 
-**Pass 1: Structural parser (pure C#, no external library)**
+- **Trailing garbage**: extra bytes left at the end of the file, often a leftover tag from another tool. Audio is fine.
+- **Lost sync / Bad header**: the decoder got lost partway through the file. Usually means real corruption.
+- **Frame CRC mismatch**: a checksum inside the file does not match the audio data. Real corruption.
+- **Truncated stream**: the file ends in the middle of a frame. The last fraction of a second will be missing.
+- **Decode error**: the decoder gave up. The audio is broken at that point.
 
-Every frame header is parsed and validated: sync word, MPEG version, Layer III marker, bitrate, and sample rate. The parser then walks the stream frame by frame, computing each frame's expected size and verifying that the next frame starts exactly where it should.
-
-Additional checks:
-
-- Frames that carry a CRC have their checksum verified against the frame's side information.
-- The Xing header (VBR files) or Info header (CBR files), if present, is validated: the declared frame count is compared against the actual count found during the scan.
-- If a LAME tag is present, its own CRC is verified.
-
-**Pass 2: Full audio decode via [mpg123](https://www.mpg123.de/)**
-
-The entire buffer is fed to mpg123 and fully decoded to PCM. This catches corruption that survives the structural scan: bit reservoir errors, Huffman decoding failures, and similar low-level issues. Pass 2 is skipped if Pass 1 already found an error.
-
-
-### Results
-
-Each scanned file is assigned a **Result** (OK or ISSUE) and, when an issue is found, a **Severity** that indicates how serious it is.
-
-| Severity     | Meaning                                                                          |
-| ------------ | -------------------------------------------------------------------------------- |
-| **Low**      | Minor anomaly with no impact on audio playback (metadata or index inconsistency) |
-| **Medium**   | Stream structure anomaly: audio data is likely intact and the file is playable  |
-| **High**     | Analysis could not complete: file state is uncertain                            |
-| **Critical** | Audio data is corrupted                                             |
-
-The **Message** column gives a plain-language description of the issue along with its position in the file (timecode and frame number when available). The **Error** column contains the raw diagnostic code for reference.
-
-**Keyboard shortcut:** select one or more rows and press **Ctrl+C** to copy them to the clipboard as a JSON array (path, name, duration, format, result, message, error code).
-
-## Diagnostics reference
-
-### FLAC
-* `TRAILING_GARBAGE`: Non-audio bytes found immediately after the last valid audio frame
-* `LOST_SYNC`: Stream synchronisation was lost in the middle of the file
-* `BAD_HEADER`: Frame header that libFLAC could not parse
-* `FRAME_CRC_MISMATCH`: A frame's CRC does not match its audio content
-* `UNPARSEABLE_STREAM`: The bitstream is too broken for the decoder to interpret.
-
-### MP3
-* `BAD_HEADER`: Frame header with an invalid bitrate or sample rate index
-* `JUNK_DATA`: 1–3 unexpected bytes found between two valid frames
-* `LOST_SYNC`: Sync word missing at the expected position after a frame
-* `XING_FRAME_COUNT_MISMATCH` and `INFO_FRAME_COUNT_MISMATCH`: The Xing VBR or Info CBR header declares a frame count that does not match the actual frame count
-* `TRUNCATED_STREAM`: End of file reached in the middle of a frame
-* `FRAME_CRC_MISMATCH`: A frame's CRC does not match its side information
-* `DECODE_ERROR`: mpg123 reported a decode error (bit reservoir underrun, Huffman decoding failure, etc.), the audio is corrupted.
-
-A help panel tells you what went wrong and how to fix it, when a fix is available.
+The help panel inside the app gives you a longer explanation and a suggested fix for each one.
 
 ## Supported formats
 
-| Format     | Status    | Backend                                  |
-| ---------- | --------- | ---------------------------------------- |
-| FLAC       | Supported | `libFLAC.dll` (falls back to `flac.exe`) |
-| MP3        | Supported | Pure C# structural parser + `mpg123.dll` |
-| Ogg Vorbis | Planned   |                                       |
-| AAC / M4A  | Planned   |                                       |
-| WAV / AIFF | Planned   |                                       |
-| Opus       | Planned   |                                       |
+| Format | Status |
+|---|---|
+| FLAC | Supported |
+| MP3 | Supported |
+| Ogg Vorbis | Planned |
+| AAC / M4A | Planned |
+| WAV / AIFF | Planned |
+| Opus | Planned |
 
 ## Requirements
 
-- Windows 10 or later (x64)
-- .NET 8 Desktop Runtime
-- `libFLAC.dll` placed next to the exe (or in PATH)
-- `mpg123.dll` placed next to the exe (optional, enables MP3 audio decode in Pass 2)
+- Windows 10 or later (64-bit)
+- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
+- `libFLAC.dll` and `mpg123.dll`, both shipped in the release zip. Drop them next to the exe.
 
+You can also point the app at your own copies via **Options > Libraries**.
 
 ## Troubleshooting
 
-**Drag and drop is blocked, cursor shows a "no entry" symbol**
+**Drag and drop does not work.** This happens when the app runs as administrator and Windows Explorer does not (or the other way around). Windows blocks drag and drop between different privilege levels. Launch the exe by double-clicking it from Explorer instead of from an elevated terminal.
 
-This happens when the application is running with elevated privileges (administrator) while Windows Explorer is not. Windows silently blocks drag and drop from a lower-privilege process to a higher-privilege one.
+**MP3 files only get a partial check.** The status bar shows `mpg123: not found`. The full audio decode pass needs `mpg123.dll` next to the exe. The version shipped in the release zip is the right one (64-bit). If you replaced it with your own, make sure it is the 64-bit build.
 
-Fix: launch the exe directly by double-clicking it from Explorer, or ensure your terminal is not running as administrator.
+**FLAC files fail with a missing library error.** Same fix: `libFLAC.dll` must be next to the exe, 64-bit.
 
+---
 
+Suggestions and bug reports are welcome. Open an issue or start a discussion.
 
-**MP3 files are only partially checked, status bar shows `mpg123: not found`**
-
-Pass 2 (full audio decode) requires `mpg123.dll` to be loadable by Windows. Without it, only the structural Pass 1 runs. Download the x64 build from [mpg123.de](https://www.mpg123.de/download.shtml) and place `mpg123.dll` next to the exe.
-
-If the DLL is present but the warning still appears, it may be built for the wrong architecture (32-bit vs 64-bit). This application requires the x64 build.
-
-
-
-**FLAC files fail or show an unexpected error, status bar shows `libFLAC: not found`**
-
-If `libFLAC.dll` is missing, the tool falls back to `flac.exe` (searched first next to the exe, then in PATH). If neither is found, FLAC analysis will fail at runtime. Ensure at least one of the two is available.
-
-
-
-Suggestions and bug reports are welcome, open an issue or start a discussion.
-
-*This project was made with [Claude](https://claude.ai/).*
+*Built with [Claude](https://claude.ai/).*
