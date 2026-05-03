@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     private readonly Dictionary<string, ListViewItem> _itemByPath = new(
         StringComparer.OrdinalIgnoreCase
     );
+    private readonly List<CompletedFileSnapshot> _completedSnapshots = [];
 
     private int _totalFiles;
     private int _completedFiles;
@@ -556,14 +557,15 @@ public sealed class MainForm : Form
         _scanCts?.Cancel();
         _analysisCts?.Cancel();
 
-        var prefs = new UserPreferences
-        {
-            WindowMaximized = WindowState == FormWindowState.Maximized,
-            HelpPanelVisible = !_splitContainer.Panel2Collapsed,
-            HiddenColumns = new HashSet<int>(_hiddenColumnWidths.Keys),
-        };
+        // Load before mutating so library paths, worker count and export
+        // choices stored elsewhere survive the close. Constructing a fresh
+        // UserPreferences here would have reset every field that this
+        // handler doesn't explicitly know about.
+        var prefs = UserPreferences.Load();
+        prefs.WindowMaximized = WindowState == FormWindowState.Maximized;
+        prefs.HelpPanelVisible = !_splitContainer.Panel2Collapsed;
+        prefs.HiddenColumns = new HashSet<int>(_hiddenColumnWidths.Keys);
 
-        // Save normal (non-maximized) bounds
         var restoreBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
         prefs.WindowX = restoreBounds.X;
         prefs.WindowY = restoreBounds.Y;
@@ -602,6 +604,7 @@ public sealed class MainForm : Form
 
         _queuedFiles.Clear();
         _itemByPath.Clear();
+        _completedSnapshots.Clear();
         _listView.Items.Clear();
         _totalBytes = 0;
         _fileSizes.Clear();
@@ -990,6 +993,7 @@ public sealed class MainForm : Form
 
         _queuedFiles.Clear();
         _itemByPath.Clear();
+        _completedSnapshots.Clear();
         _listView.Items.Clear();
         _totalBytes = 0;
         _fileSizes.Clear();
@@ -1402,6 +1406,15 @@ public sealed class MainForm : Form
             item.SubItems[ColMessage].Text = ResultFormatting.BuildMessageColumnText(result);
             item.SubItems[ColError].Text = result.ErrorMessage ?? string.Empty;
 
+            _completedSnapshots.Add(
+                new CompletedFileSnapshot(
+                    args.FilePath,
+                    item.SubItems[ColFormat].Text,
+                    args.Duration,
+                    result
+                )
+            );
+
             UpdateStatusBar();
             RefreshPausingState();
         });
@@ -1449,54 +1462,20 @@ public sealed class MainForm : Form
 
     private void ShowCompletionDialog(TimeSpan elapsed)
     {
-        string timeText = FormatElapsed(elapsed);
-
-        var builder = new System.Text.StringBuilder();
-        builder.AppendLine(
-            $"Checked {_totalFiles} file{(_totalFiles == 1 ? "" : "s")} in {timeText}."
+        var prefs = UserPreferences.Load();
+        var snapshots = _completedSnapshots.ToList();
+        using var dlg = new AnalysisCompleteForm(
+            snapshots,
+            _totalFiles,
+            elapsed,
+            _countMetadata,
+            _countIndex,
+            _countStructure,
+            _countCorruption,
+            _countError,
+            prefs
         );
-        builder.AppendLine();
-
-        bool hasSevere = _countCorruption > 0 || _countError > 0;
-        bool hasMinor = _countStructure > 0 || _countIndex > 0 || _countMetadata > 0;
-
-        if (!hasSevere && !hasMinor)
-        {
-            builder.Append("All files OK.");
-        }
-        else
-        {
-            if (_countCorruption > 0)
-                builder.AppendLine(
-                    $"{_countCorruption} CORRUPTION: audio data demonstrably damaged."
-                );
-            if (_countError > 0)
-                builder.AppendLine(
-                    $"{_countError} ERROR: analysis tool failed, file state unknown."
-                );
-            if (_countStructure > 0)
-                builder.AppendLine(
-                    $"{_countStructure} STRUCTURE: stream anomaly, audio likely intact."
-                );
-            if (_countIndex > 0)
-                builder.AppendLine($"{_countIndex} INDEX: seek/frame count mismatch.");
-            if (_countMetadata > 0)
-                builder.Append(
-                    $"{_countMetadata} METADATA: tag inconsistency, no playback impact."
-                );
-        }
-
-        var icon =
-            hasSevere ? MessageBoxIcon.Error
-            : hasMinor ? MessageBoxIcon.Warning
-            : MessageBoxIcon.Information;
-
-        MessageBox.Show(
-            builder.ToString().TrimEnd(),
-            "Analysis Complete",
-            MessageBoxButtons.OK,
-            icon
-        );
+        dlg.ShowDialog(this);
     }
 
     private void OnColumnClick(object? sender, ColumnClickEventArgs e)
