@@ -18,6 +18,7 @@ internal static class ToolStripIcons
     public const string Information = "information.png";
     public const string Exclamation = "exclamation.png";
     public const string Error = "error.png";
+    public const string Tick = "tick.png";
 
     public static Image Load(string resourceName)
     {
