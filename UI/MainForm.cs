@@ -1740,55 +1740,6 @@ public sealed class MainForm : Form
         Clipboard.SetText(json);
     }
 
-    private static readonly Color RowAltColor = Color.FromArgb(245, 245, 245);
-
-    private void OnDrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
-    {
-        if (e.Item is null)
-            return;
-
-        // Row background: selection takes priority, then alternating color
-        Color back = e.Item.Selected
-            ? (_listView.Focused ? SystemColors.Highlight : SystemColors.ButtonFace)
-            : (e.ItemIndex % 2 == 0 ? Color.White : RowAltColor);
-
-        using (var brush = new SolidBrush(back))
-            e.Graphics.FillRectangle(brush, e.Bounds);
-
-        // Text color: respect per-subitem ForeColor (set for the Severity column)
-        var subFore = e.SubItem?.ForeColor ?? Color.Empty;
-        Color fore =
-            e.Item.Selected && _listView.Focused
-                ? SystemColors.HighlightText
-                : (subFore.IsEmpty ? SystemColors.WindowText : subFore);
-
-        // Text alignment from column definition
-        var align = _listView.Columns[e.ColumnIndex].TextAlign;
-        var flags =
-            TextFormatFlags.VerticalCenter
-            | TextFormatFlags.EndEllipsis
-            | (
-                align == HorizontalAlignment.Center ? TextFormatFlags.HorizontalCenter
-                : align == HorizontalAlignment.Right ? TextFormatFlags.Right
-                : TextFormatFlags.Left
-            );
-
-        var textBounds = new Rectangle(
-            e.Bounds.X + 3, // 3 px left/right padding inside each cell
-            e.Bounds.Y,
-            e.Bounds.Width - 6,
-            e.Bounds.Height
-        );
-        TextRenderer.DrawText(e.Graphics, e.SubItem?.Text, e.Item.Font, textBounds, fore, flags);
-
-        // Vertical separator (right border only)
-        using var pen = new Pen(SystemColors.ControlLight);
-        e.Graphics.DrawLine(
-            pen,
-            e.Bounds.Right - 1,
-            e.Bounds.Top,
-            e.Bounds.Right - 1,
-            e.Bounds.Bottom - 1
-        );
-    }
+    private void OnDrawSubItem(object? sender, DrawListViewSubItemEventArgs e) =>
+        ListViewSubItemPainter.Paint(_listView, e);
 }
