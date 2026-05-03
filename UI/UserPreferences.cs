@@ -26,6 +26,9 @@ internal sealed class UserPreferences
     internal string LibFlacPath { get; set; } = string.Empty;
     internal string Mpg123Path { get; set; } = string.Empty;
 
+    internal string LastExportFormat { get; set; } = "Text";
+    internal string LastExportScope { get; set; } = "Issues";
+
     internal static UserPreferences Load()
     {
         var prefs = new UserPreferences();
@@ -59,6 +62,9 @@ internal sealed class UserPreferences
 
         prefs.LibFlacPath = ReadString(key, "LibFlacPath", string.Empty);
         prefs.Mpg123Path = ReadString(key, "Mpg123Path", string.Empty);
+
+        prefs.LastExportFormat = ReadString(key, "LastExportFormat", "Text");
+        prefs.LastExportScope = ReadString(key, "LastExportScope", "Issues");
 
         return prefs;
     }
@@ -101,5 +107,7 @@ internal sealed class UserPreferences
         key.SetValue("WorkerCount", WorkerCount, RegistryValueKind.DWord);
         key.SetValue("LibFlacPath", LibFlacPath ?? string.Empty, RegistryValueKind.String);
         key.SetValue("Mpg123Path", Mpg123Path ?? string.Empty, RegistryValueKind.String);
+        key.SetValue("LastExportFormat", LastExportFormat ?? "Text", RegistryValueKind.String);
+        key.SetValue("LastExportScope", LastExportScope ?? "Issues", RegistryValueKind.String);
     }
 }
