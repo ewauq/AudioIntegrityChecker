@@ -14,15 +14,14 @@ internal sealed class AnalysisCompleteForm : Form
     private const int ColSeverity = 0;
     private const int ColFile = 1;
     private const int ColFormat = 2;
-    private const int ColDuration = 3;
-    private const int ColMessage = 4;
+    private const int ColMessage = 3;
 
     private readonly UserPreferences _prefs;
     private readonly IReadOnlyList<CompletedFileSnapshot> _all;
     private readonly IReadOnlyList<CompletedFileSnapshot> _issuesOnly;
     private readonly ScanSummary _summary;
 
-    private readonly ListView _listView;
+    private readonly BufferedListView _listView;
     private readonly ColumnHeader _msgColumn;
     private Image? _bannerImage;
     private int _sortColumn = ColSeverity;
@@ -42,9 +41,7 @@ internal sealed class AnalysisCompleteForm : Form
     {
         _prefs = prefs;
         _all = snapshots;
-        _issuesOnly = snapshots
-            .Where(s => s.Result.Category != CheckCategory.Ok)
-            .ToList();
+        _issuesOnly = snapshots.Where(s => s.Result.Category != CheckCategory.Ok).ToList();
         _summary = new ScanSummary(
             TotalFiles: totalFiles,
             Elapsed: elapsed,
@@ -67,7 +64,7 @@ internal sealed class AnalysisCompleteForm : Form
         ShowInTaskbar = false;
         ClientSize = new Size(720, 520);
 
-        _listView = new ListView
+        _listView = new BufferedListView
         {
             Dock = DockStyle.Fill,
             View = View.Details,
@@ -75,32 +72,27 @@ internal sealed class AnalysisCompleteForm : Form
             MultiSelect = true,
             HideSelection = false,
             GridLines = false,
-            BorderStyle = BorderStyle.FixedSingle,
+            BorderStyle = BorderStyle.None,
+            OwnerDraw = true,
             UseCompatibleStateImageBehavior = false,
         };
         _listView.Columns.Add(new ColumnHeader { Text = "Severity", Width = 80 });
-        _listView.Columns.Add(new ColumnHeader { Text = "File", Width = 300 });
+        _listView.Columns.Add(new ColumnHeader { Text = "File", Width = 240 });
         _listView.Columns.Add(new ColumnHeader { Text = "Format", Width = 60 });
-        _listView.Columns.Add(new ColumnHeader { Text = "Duration", Width = 80 });
-        _msgColumn = new ColumnHeader { Text = "Message", Width = 280 };
+        _msgColumn = new ColumnHeader { Text = "Message", Width = 320 };
         _listView.Columns.Add(_msgColumn);
         _listView.ColumnClick += OnColumnClick;
         _listView.ItemActivate += OnItemActivate;
         _listView.KeyDown += OnListViewKeyDown;
         _listView.SizeChanged += (_, _) => ResizeMessageColumn();
-
-        var listHost = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(16, 0, 16, 0),
-            BackColor = SystemColors.Window,
-        };
-        listHost.Controls.Add(_listView);
+        _listView.DrawColumnHeader += (_, e) => e.DrawDefault = true;
+        _listView.DrawItem += (_, _) => { };
+        _listView.DrawSubItem += (_, e) => ListViewSubItemPainter.Paint(_listView, e);
 
         var banner = BuildBannerPanel();
         var buttonPanel = BuildButtonPanel();
 
-        Controls.Add(listHost);
+        Controls.Add(_listView);
         Controls.Add(banner);
         Controls.Add(buttonPanel);
 
@@ -154,11 +146,10 @@ internal sealed class AnalysisCompleteForm : Form
             e.Graphics.DrawLine(pen, 0, panel.Height - 1, panel.Width, panel.Height - 1);
         };
 
-        string iconName = _summary.Corruption + _summary.Error > 0
-            ? ToolStripIcons.Error
-            : _summary.IssuesCount > 0
-                ? ToolStripIcons.Exclamation
-                : ToolStripIcons.Tick;
+        string iconName =
+            _summary.Corruption + _summary.Error > 0 ? ToolStripIcons.Error
+            : _summary.IssuesCount > 0 ? ToolStripIcons.Exclamation
+            : ToolStripIcons.Tick;
         _bannerImage = ToolStripIcons.Load(iconName);
 
         var picture = new PictureBox
@@ -207,7 +198,8 @@ internal sealed class AnalysisCompleteForm : Form
             parts.Add($"{_summary.Index} index");
         if (_summary.Metadata > 0)
             parts.Add($"{_summary.Metadata} metadata");
-        return string.Join(" · ", parts);
+        string lead = $"{_summary.IssuesCount} issue{(_summary.IssuesCount == 1 ? "" : "s")} listed";
+        return $"{lead}: {string.Join(" · ", parts)}";
     }
 
     // ---------------------------------------------------------------------
@@ -229,11 +221,11 @@ internal sealed class AnalysisCompleteForm : Form
             e.Graphics.DrawLine(pen, 0, 0, panel.Width, 0);
         };
 
-        var counter = new Label
+        var hint = new Label
         {
             Text = _issuesOnly.Count == 0
-                ? "No issues found."
-                : $"{_issuesOnly.Count} issue{(_issuesOnly.Count == 1 ? "" : "s")} listed.",
+                ? ""
+                : "Double-click a row to show the file in Explorer.",
             ForeColor = SystemColors.GrayText,
             AutoSize = true,
             Location = new Point(20, 20),
@@ -257,13 +249,10 @@ internal sealed class AnalysisCompleteForm : Form
             Size = new Size(96, 28),
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
-        exportBtn.Location = new Point(
-            closeBtn.Location.X - 96 - 8,
-            panel.Padding.Top
-        );
+        exportBtn.Location = new Point(closeBtn.Location.X - 96 - 8, panel.Padding.Top);
         exportBtn.Click += OnExportClick;
 
-        panel.Controls.AddRange([counter, exportBtn, closeBtn]);
+        panel.Controls.AddRange([hint, exportBtn, closeBtn]);
         AcceptButton = closeBtn;
         CancelButton = closeBtn;
         return panel;
@@ -292,34 +281,26 @@ internal sealed class AnalysisCompleteForm : Form
         item.UseItemStyleForSubItems = false;
         item.SubItems[ColSeverity].ForeColor = ResultFormatting.GetSeverityColor(severity);
 
-        item.SubItems.Add(snapshot.Path);
+        item.SubItems.Add(System.IO.Path.GetFileName(snapshot.Path));
         item.SubItems.Add(snapshot.Format ?? "");
-        item.SubItems.Add(FormatDuration(snapshot.Duration));
         item.SubItems.Add(
             snapshot.Result.Category == CheckCategory.Ok
                 ? ""
                 : ResultFormatting.BuildMessageColumnText(snapshot.Result)
         );
+        item.ToolTipText = snapshot.Path;
         return item;
-    }
-
-    private static string FormatDuration(TimeSpan? duration)
-    {
-        if (duration is null)
-            return "";
-        var d = duration.Value;
-        return d.TotalHours >= 1
-            ? $"{(int)d.TotalHours}:{d.Minutes:D2}:{d.Seconds:D2}"
-            : $"{d.Minutes:D2}:{d.Seconds:D2}";
     }
 
     private List<CompletedFileSnapshot> SortIssues(IEnumerable<CompletedFileSnapshot> source)
     {
         IEnumerable<CompletedFileSnapshot> ordered = _sortColumn switch
         {
-            ColFile => source.OrderBy(s => s.Path, StringComparer.OrdinalIgnoreCase),
+            ColFile => source.OrderBy(
+                s => System.IO.Path.GetFileName(s.Path),
+                StringComparer.OrdinalIgnoreCase
+            ),
             ColFormat => source.OrderBy(s => s.Format ?? "", StringComparer.OrdinalIgnoreCase),
-            ColDuration => source.OrderBy(s => s.Duration ?? TimeSpan.Zero),
             ColMessage => source.OrderBy(
                 s => ResultFormatting.BuildMessageColumnText(s.Result),
                 StringComparer.OrdinalIgnoreCase
@@ -329,9 +310,7 @@ internal sealed class AnalysisCompleteForm : Form
                 .ThenBy(s => s.Path, StringComparer.OrdinalIgnoreCase),
         };
         if (_sortAscending && _sortColumn == ColSeverity)
-            ordered = source.OrderBy(
-                s => (int)ResultFormatting.GetSeverity(s.Result.Category)
-            );
+            ordered = source.OrderBy(s => (int)ResultFormatting.GetSeverity(s.Result.Category));
         else if (!_sortAscending && _sortColumn != ColSeverity)
             ordered = ordered.Reverse();
         return ordered.ToList();
@@ -408,20 +387,21 @@ internal sealed class AnalysisCompleteForm : Form
                 {
                     path = s.Path,
                     format = s.Format,
-                    duration = FormatDuration(s.Duration),
                     severity = ResultFormatting.GetSeverity(s.Result.Category).ToString(),
                     result = s.Result.Category == CheckCategory.Ok ? "OK" : "ISSUE",
-                    message =
-                        s.Result.Category == CheckCategory.Ok
-                            ? ""
-                            : ResultFormatting.BuildMessageColumnText(s.Result),
+                    message = s.Result.Category == CheckCategory.Ok
+                        ? ""
+                        : ResultFormatting.BuildMessageColumnText(s.Result),
                     error = s.Result.ErrorMessage ?? "",
                 }
             );
         }
         if (rows.Count == 0)
             return;
-        string json = JsonSerializer.Serialize(rows, new JsonSerializerOptions { WriteIndented = true });
+        string json = JsonSerializer.Serialize(
+            rows,
+            new JsonSerializerOptions { WriteIndented = true }
+        );
         try
         {
             Clipboard.SetText(json);
@@ -500,7 +480,5 @@ internal sealed class AnalysisCompleteForm : Form
         };
 
     private static ExportScope ParseScope(string raw) =>
-        raw?.Trim().ToLowerInvariant() == "all"
-            ? ExportScope.AllFiles
-            : ExportScope.IssuesOnly;
+        raw?.Trim().ToLowerInvariant() == "all" ? ExportScope.AllFiles : ExportScope.IssuesOnly;
 }

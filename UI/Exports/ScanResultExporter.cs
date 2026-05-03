@@ -85,7 +85,10 @@ internal static class ScanResultExporter
         Stream output
     )
     {
-        using var w = new StreamWriter(output, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+        using var w = new StreamWriter(
+            output,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
+        )
         {
             NewLine = "\r\n",
         };
@@ -117,9 +120,10 @@ internal static class ScanResultExporter
             string file = TruncateOrPad(row.Path, wFile);
             string fmt = (row.Format ?? "").PadRight(wFmt);
             string dur = FormatDurationLong(row.Duration).PadRight(wDur);
-            string msg = row.Result.Category == CheckCategory.Ok
-                ? "OK"
-                : ResultFormatting.BuildMessageColumnText(row.Result);
+            string msg =
+                row.Result.Category == CheckCategory.Ok
+                    ? "OK"
+                    : ResultFormatting.BuildMessageColumnText(row.Result);
             w.WriteLine($"{sev}  {file}  {fmt}  {dur}  {msg}");
         }
     }
@@ -130,7 +134,10 @@ internal static class ScanResultExporter
         Stream output
     )
     {
-        using var w = new StreamWriter(output, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+        using var w = new StreamWriter(
+            output,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
+        )
         {
             NewLine = "\r\n",
         };
@@ -170,7 +177,10 @@ internal static class ScanResultExporter
         Stream output
     )
     {
-        using var w = new StreamWriter(output, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true))
+        using var w = new StreamWriter(
+            output,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)
+        )
         {
             NewLine = "\r\n",
         };
@@ -190,9 +200,7 @@ internal static class ScanResultExporter
         w.WriteLine(
             "th{background:#f4f4f4;text-align:left;padding:8px 12px;position:sticky;top:0;border-bottom:1px solid #ddd;font-weight:600;}"
         );
-        w.WriteLine(
-            "td{padding:6px 12px;border-bottom:1px solid #eee;vertical-align:top;}"
-        );
+        w.WriteLine("td{padding:6px 12px;border-bottom:1px solid #eee;vertical-align:top;}");
         w.WriteLine(".sev{font-weight:600;white-space:nowrap;}");
         w.WriteLine(".sev-critical{color:#dc143c;}");
         w.WriteLine(".sev-high{color:#ff4500;}");

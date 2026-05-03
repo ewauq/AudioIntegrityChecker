@@ -24,8 +24,7 @@ internal sealed class ExportOptionsForm : Form
         }
     }
 
-    internal ExportScope Scope =>
-        _rbAll.Checked ? ExportScope.AllFiles : ExportScope.IssuesOnly;
+    internal ExportScope Scope => _rbAll.Checked ? ExportScope.AllFiles : ExportScope.IssuesOnly;
 
     internal ExportOptionsForm(ExportFormat initialFormat, ExportScope initialScope, bool hasIssues)
     {
